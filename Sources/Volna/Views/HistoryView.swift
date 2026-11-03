@@ -172,3 +172,54 @@ struct HistoryView: View {
         return date.formatted(.dateTime.day().month(.wide).locale(Locale(identifier: "ru_RU")))
     }
 }
+
+/// Tracks Yandex considers close to the given one.
+struct SimilarTracksView: View {
+    @Environment(Session.self) private var session
+    @Environment(PlayerEngine.self) private var player
+    let track: Track
+    @State private var tracks: [Track] = []
+    @State private var loaded = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    TerminalHeader(title: "Похожие", caption: "на: \(track.fullTitle.lowercased()) — \(track.artistLine.lowercased())")
+                    TerminalActions {
+                        player.play(tracks)
+                    } shuffle: {
+                        player.play(tracks.shuffled())
+                    }
+                    .disabled(tracks.isEmpty)
+                }
+            }
+            .terminalRow()
+            .listRowSeparator(.hidden)
+
+            TrackList(tracks: tracks)
+        }
+        .terminalPage()
+        .overlay {
+            if !loaded { ProgressView().tint(Brand.acid) }
+            if loaded && tracks.isEmpty && error == nil {
+                Text("> похожих не нашлось").font(Brand.mono(12)).foregroundStyle(.white.opacity(0.5))
+            }
+            if let error { ErrorBanner(message: error) { Task { await load() } } }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let client = session.client else { return }
+        do {
+            tracks = try await client.similarTracks(trackID: track.id.value)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+        loaded = true
+    }
+}

@@ -87,6 +87,14 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Similar
+
+    func similarTracks(trackID: String) async throws -> [Track] {
+        struct Similar: Decodable { let similarTracks: [Lenient<Track>]? }
+        let result: Similar = try await get("tracks/\(trackID)/similar")
+        return result.similarTracks?.compactMap(\.value) ?? []
+    }
+
     // MARK: History
 
     /// `fullModels` asks the server to inline full track/album objects for the newest entries.

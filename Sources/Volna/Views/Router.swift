@@ -8,6 +8,7 @@ final class Router {
         case artist(id: String, name: String)
         case album(Album)
         case addToPlaylist(Track)
+        case similar(Track)
         case settings
         case waveSettings
 
@@ -16,6 +17,7 @@ final class Router {
             case .artist(let id, _): "artist-\(id)"
             case .album(let album): "album-\(album.id.value)"
             case .addToPlaylist(let track): "add-\(track.id.value)"
+            case .similar(let track): "similar-\(track.id.value)"
             case .settings: "settings"
             case .waveSettings: "wave-settings"
             }
@@ -46,6 +48,7 @@ struct DestinationView: View {
         case .artist(let id, let name): ArtistView(artistID: id, name: name)
         case .album(let album): AlbumView(album: album)
         case .addToPlaylist(let track): AddToPlaylistView(track: track)
+        case .similar(let track): SimilarTracksView(track: track)
         case .settings: SettingsView()
         case .waveSettings: WaveSettingsView()
         }
@@ -71,6 +74,10 @@ struct TrackMenu: View {
             }
         }
         Section {
+            Button("Похожие треки", systemImage: "square.stack.3d.down.right") {
+                Haptics.tap()
+                router.destination = .similar(track)
+            }
             Button("Волна по треку", systemImage: "dot.radiowaves.left.and.right") {
                 Haptics.launch()
                 player.startWave(seeds: ["track:\(track.id.value)"], title: "Волна по треку")
