@@ -251,20 +251,15 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
     /// Splits the analyzer's six bands into bass / mids / highs, each with a level and a "hit"
     /// (how far it jumps above its own recent average), so steady pads and sharp hits look different.
     private func updateAudio(dt: Float) {
+        // Levels are already aligned to what is audible and normalised per track by the analyzer;
+        // here they only get a light smoothing so the picture doesn't flicker frame to frame.
         let levels = AudioAnalyzer.shared.snapshot()
         let live = isPlaying && Date().timeIntervalSince(levels.updated) < 0.5
-        let b = levels.bands
-        let rawBass = live ? max(b[0], b[1]) : 0
-        let rawMid = live ? max(b[2], b[3]) : 0
-        let rawHigh = live ? max(b[4], b[5]) : 0
-
-        bass += (rawBass - bass) * min(1, dt * 14)
-        mid += (rawMid - mid) * min(1, dt * 8)
-        high += (rawHigh - high) * min(1, dt * 18)
-        midAverage += (rawMid - midAverage) * min(1, dt * 1.5)
-        highAverage += (rawHigh - highAverage) * min(1, dt * 1.5)
-        midHit = max(midHit * exp(-dt * 6), min(1, max(0, rawMid - midAverage) * 5))
-        highHit = max(highHit * exp(-dt * 10), min(1, max(0, rawHigh - highAverage) * 6))
+        bass += ((live ? levels.bass : 0) - bass) * min(1, dt * 20)
+        mid += ((live ? levels.mid : 0) - mid) * min(1, dt * 12)
+        high += ((live ? levels.high : 0) - high) * min(1, dt * 24)
+        midHit = live ? levels.midHit : midHit * exp(-dt * 6)
+        highHit = live ? levels.highHit : highHit * exp(-dt * 10)
 
         if live, levels.beat != lastBeat { kick = 1; flash = max(flash, 0.8); beatPhase = 0 }
         beatPhase = min(1.3, beatPhase + dt * 2.1)

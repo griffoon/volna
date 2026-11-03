@@ -165,6 +165,7 @@ struct WaveView: View {
                     Text("> tx: \(line)")
                         .foregroundStyle(line.hasSuffix("ok") ? Brand.acid : Color(red: 1, green: 0.45, blue: 0.45))
                 }
+                if showLog { AnalyzerReadout() }
             }
             .font(Brand.mono(11, weight: .medium))
             .foregroundStyle(.white.opacity(0.85))
@@ -365,6 +366,31 @@ struct WaveView: View {
             withAnimation(.easeIn(duration: 0.3)) { if toast == message { toast = nil } }
         }
     }
+}
+
+/// Live analyzer state in the expanded HUD: is the tap there, is it in sync, what it hears.
+private struct AnalyzerReadout: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.15)) { _ in
+            let d = AudioAnalyzer.shared.diagnostics()
+            let l = AudioAnalyzer.shared.snapshot()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("> fft: taps \(d.tapsAttached) · \(Int(d.sampleRate)) Hz · \(d.format)")
+                Text("> sync: \(d.synced ? "ok" : "нет кадров") · опережение \(String(format: "%.2f", d.lead)) с")
+                    .foregroundStyle(d.synced ? Brand.acid : Color(red: 1, green: 0.45, blue: 0.45))
+                Text("> бас \(Self.bar(l.bass)) \(Self.hit(l.bassHit))")
+                Text("> мид \(Self.bar(l.mid)) \(Self.hit(l.midHit))")
+                Text("> хай \(Self.bar(l.high)) \(Self.hit(l.highHit))")
+            }
+        }
+    }
+
+    private static func bar(_ value: Float) -> String {
+        let filled = Int((min(max(value, 0), 1) * 12).rounded())
+        return String(repeating: "█", count: filled) + String(repeating: "·", count: 12 - filled)
+    }
+
+    private static func hit(_ value: Float) -> String { value > 0.3 ? "◆" : "◇" }
 }
 
 private struct RoundGlassLabel: View {

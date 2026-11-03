@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 import MediaPlayer
 import Observation
 import UIKit
@@ -82,7 +83,16 @@ final class PlayerEngine {
     private static let waveRefillThreshold = 2
     private static let fadeStep: Duration = .milliseconds(50)
 
+    /// The player whose sound is heard, read by the analyzer clock from any thread.
+    nonisolated(unsafe) private static let audible = OSAllocatedUnfairLock<AVPlayer?>(uncheckedState: nil)
+
     init() {
+        AudioAnalyzer.shared.clock = {
+            guard let player = PlayerEngine.audible.withLock({ $0 }), let item = player.currentItem,
+                  let tap = AudioAnalyzer.shared.tapID(for: item) else { return nil }
+            let time = player.currentTime().seconds
+            return time.isFinite ? (tap, time) : nil
+        }
         configureAudioSession()
         configureRemoteCommands()
         for player in players {
@@ -488,6 +498,8 @@ final class PlayerEngine {
     }
 
     private func startActive(resumed: Bool = false) {
+        let audiblePlayer = activePlayer
+        Self.audible.withLock { $0 = audiblePlayer }
         activePlayer.volume = 1
         activePlayer.play()
         isPlaying = true
@@ -596,6 +608,7 @@ final class PlayerEngine {
         let outgoing = activePlayer
         active = 1 - active
         let incoming = activePlayer
+        Self.audible.withLock { $0 = incoming }
         incoming.volume = 0
         incoming.play()
         index += 1
