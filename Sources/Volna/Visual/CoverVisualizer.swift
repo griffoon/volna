@@ -261,10 +261,16 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         midHit = live ? levels.midHit : midHit * exp(-dt * 6)
         highHit = live ? levels.highHit : highHit * exp(-dt * 10)
 
-        if live, levels.beat != lastBeat { kick = 1; flash = max(flash, 0.8); beatPhase = 0 }
+        // The jump follows the kick's own clock (time since its attack was heard), so it lands
+        // on the hit instead of on whichever frame happened to notice it.
+        if live, levels.beat != lastBeat {
+            flash = max(flash, 0.5 + 0.4 * levels.kickStrength)
+            beatPhase = Float(min(levels.kickAge, 0.1)) * 2.1
+        }
         beatPhase = min(1.3, beatPhase + dt * 2.1)
         lastBeat = levels.beat
-        kick *= exp(-dt * 7)
+        let attack = live && levels.kickAge.isFinite ? Float(exp(-levels.kickAge * 7)) * (0.55 + 0.45 * levels.kickStrength) : 0
+        kick = max(attack, kick * exp(-dt * 7))
         flash *= exp(-dt * 9)
         time += dt * (isPlaying ? 0.6 + bass * 1.4 : 0.15)
     }

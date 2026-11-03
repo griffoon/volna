@@ -30,6 +30,7 @@ struct CoverDeck: View {
                 }
                 if let current = player.current {
                     card(current, label: nil)
+                        .kickBounce(isPlaying: player.isPlaying && drag == 0)
                         .offset(x: drag)
                         .rotationEffect(.degrees(Double(drag / w) * 7), anchor: .bottom)
                         .scaleEffect(player.isPlaying ? 1 - 0.06 * progress : 0.9)

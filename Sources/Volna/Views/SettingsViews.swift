@@ -7,6 +7,8 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.crossfade) private var crossfade = 0.0
     @AppStorage(Theme.coverAccentKey) private var coverAccent = true
     @AppStorage(HapticBass.storageKey) private var hapticBass = false
+    @AppStorage(HapticBass.offsetKey) private var hapticOffset = 0.0
+    @AppStorage(KickBounce.storageKey) private var coverBounce = true
     @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
     @Environment(PlayerEngine.self) private var player
 
@@ -61,6 +63,16 @@ struct SettingsView: View {
             Section {
                 Toggle("Тактильный бас", isOn: $hapticBass)
                     .tint(Brand.acid)
+                if hapticBass {
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent("Сдвиг вибрации", value: hapticOffset == 0 ? "0 мс" : String(format: "%+.0f мс", hapticOffset))
+                        Slider(value: $hapticOffset, in: HapticBass.offsetRange, step: 5)
+                            .tint(Brand.acid)
+                            .onChange(of: hapticOffset) { Haptics.tick() }
+                    }
+                }
+                Toggle("Обложка в такт", isOn: $coverBounce)
+                    .tint(Brand.acid)
                 Toggle("Акцент из обложки", isOn: $coverAccent)
                     .tint(Brand.acid)
                     .onChange(of: coverAccent) {
@@ -69,7 +81,7 @@ struct SettingsView: View {
             } header: {
                 Text("Вид")
             } footer: {
-                Text("Цвет кнопок и подсветки берётся из обложки текущего трека. На серых обложках остаётся кислотный.")
+                Text("Бас и прыжки визуализатора идут по бочке (самые низкие частоты). Если вибрация спешит или опаздывает — подвинь ползунок. Цвет кнопок и подсветки берётся из обложки текущего трека.")
             }
 
             Section {

@@ -92,6 +92,8 @@ struct NowPlayingView: View {
 
                 HStack {
                     Text(player.stream.map { "> \($0.label.lowercased())" } ?? "> buffering…")
+                    TempoText(isPlaying: player.isPlaying)
+                        .foregroundStyle(Brand.acid.opacity(0.8))
                     Spacer()
                     SpectrumText(isPlaying: player.isPlaying)
                 }
@@ -397,6 +399,7 @@ struct TrackActionsPanel: View {
     @Environment(Session.self) private var session
     @Environment(Router.self) private var router
     let track: Track
+    @State private var showCard = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -424,6 +427,9 @@ struct TrackActionsPanel: View {
                 }
                 .buttonStyle(.plain)
             }
+            row("Карточка трека", "photo.on.rectangle.angled") {
+                Haptics.tap(); showCard = true
+            }
             row("О треке", "info.circle") {
                 Haptics.tap(); router.destination = .about(track)
             }
@@ -446,6 +452,10 @@ struct TrackActionsPanel: View {
             .padding(.top, 22)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $showCard) {
+            ShareCardSheet(track: track)
+                .presentationDetents([.large])
+        }
     }
 
     private func row(_ title: String, _ symbol: String, destructive: Bool = false,

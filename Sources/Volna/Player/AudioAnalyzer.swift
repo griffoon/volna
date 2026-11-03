@@ -20,8 +20,11 @@ final class AudioAnalyzer: @unchecked Sendable {
         var midHit: Float = 0
         var highHit: Float = 0
         var loudness: Float = 0
-        /// Counts bass onsets up to this moment; a change means a kick just hit.
+        /// Counts kicks up to this moment; a change means a kick just hit.
         var beat: UInt64 = 0
+        /// Seconds since the last kick that has been heard, and how hard it was (0…1).
+        var kickAge: Double = .infinity
+        var kickStrength: Float = 0
         var updated = Date.distantPast
     }
 
@@ -49,10 +52,20 @@ final class AudioAnalyzer: @unchecked Sendable {
         let levels: Levels
     }
 
+    /// A kick drum hit, stamped with the media time its attack starts.
+    struct Kick: Sendable {
+        let tap: Int
+        let time: Double
+        let strength: Float
+        let index: UInt64
+    }
+
     private let frames = OSAllocatedUnfairLock(initialState: [Frame]())
     private let info = OSAllocatedUnfairLock(initialState: Diagnostics())
     private let tapIDs = OSAllocatedUnfairLock(initialState: [ObjectIdentifier: Int]())
     private let nextTap = OSAllocatedUnfairLock(initialState: 0)
+    private let kicks = OSAllocatedUnfairLock(initialState: (list: [Kick](), next: UInt64(1)))
+    private static let keepKicks = 64
     /// ~4 s of windows at ~12 ms hops is plenty to cover AVPlayer's read-ahead.
     private static let keepFrames = 360
 
@@ -78,7 +91,45 @@ final class AudioAnalyzer: @unchecked Sendable {
         }
         var levels = picked ?? Levels()
         if picked != nil { levels.updated = Date() }
+        let heard: Kick? = kicks.withLock { state in
+            guard let now else { return state.list.last }
+            return state.list.last { $0.tap == now.tap && $0.time <= now.time }
+        }
+        if let heard {
+            levels.beat = heard.index
+            levels.kickAge = now.map { max(0, $0.time - heard.time) } ?? .infinity
+            levels.kickStrength = heard.strength
+        }
         return levels
+    }
+
+    /// Kicks that will be heard within `horizon` seconds, with how long until each one.
+    /// The tap reads ahead of the playhead, so these are known before they sound.
+    func upcomingKicks(horizon: Double) -> [(kick: Kick, delay: Double)] {
+        guard let now = clock?() else { return [] }
+        return kicks.withLock { state in
+            state.list.compactMap { kick in
+                guard kick.tap == now.tap else { return nil }
+                let delay = kick.time - now.time
+                return delay > -0.03 && delay <= horizon ? (kick, delay) : nil
+            }
+        }
+    }
+
+    /// Tempo from the spacing of recent kicks, folded into 70…180 BPM; nil until it settles.
+    func tempo() -> Double? {
+        guard let now = clock?() else { return nil }
+        let times = kicks.withLock { state in
+            state.list.filter { $0.tap == now.tap && $0.time <= now.time && $0.time > now.time - 12 }.map(\.time)
+        }
+        guard times.count >= 6 else { return nil }
+        var intervals = zip(times.dropFirst(), times).map { $0 - $1 }.filter { $0 > 0.2 && $0 < 2 }
+        guard intervals.count >= 4 else { return nil }
+        intervals.sort()
+        var bpm = 60 / intervals[intervals.count / 2]
+        while bpm < 70 { bpm *= 2 }
+        while bpm > 180 { bpm /= 2 }
+        return bpm
     }
 
     func diagnostics() -> Diagnostics { info.withLock { $0 } }
@@ -90,8 +141,22 @@ final class AudioAnalyzer: @unchecked Sendable {
 
     fileprivate func push(tap: Int, time: Double, levels: Levels) {
         frames.withLock { list in
+            // A window earlier than ones already stored means the player seeked back:
+            // what was read ahead from the old position will never be heard.
+            if let last = list.last, last.tap == tap, last.time > time {
+                list.removeAll { $0.tap == tap && $0.time >= time }
+            }
             list.append(Frame(tap: tap, time: time, levels: levels))
             if list.count > Self.keepFrames { list.removeFirst(list.count - Self.keepFrames) }
+        }
+    }
+
+    fileprivate func pushKick(tap: Int, time: Double, strength: Float) {
+        kicks.withLock { state in
+            state.list.removeAll { $0.tap == tap && $0.time >= time - 0.001 }
+            state.list.append(Kick(tap: tap, time: time, strength: strength, index: state.next))
+            state.next &+= 1
+            if state.list.count > Self.keepKicks { state.list.removeFirst(state.list.count - Self.keepKicks) }
         }
     }
 
@@ -198,17 +263,24 @@ private final class TapContext {
     private var ceilDB = [Float](repeating: 6, count: AudioAnalyzer.bandCount)
     private var fineFloor = [Float](repeating: -40, count: AudioAnalyzer.spectrumCount)
     private var fineCeil = [Float](repeating: 6, count: AudioAnalyzer.spectrumCount)
-    /// Recent bass flux values, to require a real local peak before calling a kick.
-    private var bassFluxHistory: (Float, Float) = (0, 0)
-    private var bassPeak: Float = 0.001
+    // Kick detector: the lowest band only (~30–100 Hz, the body of the kick), low-passed in the
+    // time domain and measured every 128 samples (~3 ms) so the attack is placed precisely.
+    private static let kickBlock = 128
+    private static let kickCutoff = 100.0
+    private var kickFilter: vDSP.Biquad<Float>?
+    private var kickInput = [Float](repeating: 0, count: TapContext.hop)
+    private var kickOutput = [Float](repeating: 0, count: TapContext.hop)
+    /// Recent block levels in dB, newest last (~20 ms).
+    private var kickLevels = [Float](repeating: -120, count: 7)
+    private var kickPeakDB: Float = -60
+    private var kickRiseAverage: Float = 1
+    private var samplesSinceKick = 1_000_000
     private var smoothed = [Float](repeating: 0, count: AudioAnalyzer.bandCount)
     private var fine = [Float](repeating: 0, count: AudioAnalyzer.spectrumCount)
     // Onset detection: energy per range and its running average.
     private var previousEnergy: SIMD3<Float> = .zero
     private var fluxAverage: SIMD3<Float> = SIMD3(repeating: 0.01)
     private var hits: SIMD3<Float> = .zero
-    private var samplesSinceBeat = 0
-    private var beat: UInt64 = 0
 
     // Processing: per-channel EQ filters, rebuilt when the settings version changes.
     private let trackGain: Float
@@ -229,6 +301,8 @@ private final class TapContext {
         channels = Int(max(1, format.mChannelsPerFrame))
         scratch = [Float](repeating: 0, count: max(maxFrames, 4096))
         filterVersion = -1
+        kickFilter = vDSP.Biquad(coefficients: Self.lowpass(cutoff: Self.kickCutoff, sampleRate: format.mSampleRate),
+                                 channelCount: 1, sectionCount: 2, ofType: Float.self)
         let description = "\(isFloat ? "f32" : "int")\(isInterleaved ? " interleaved" : "") · \(channels)ch · max \(maxFrames)"
         analyzer?.noteFormat(sampleRate: format.mSampleRate, format: description)
     }
@@ -297,6 +371,7 @@ private final class TapContext {
             }
             position += step
             let time = startTime.map { $0 + Double(position) / Double(sampleRate) }
+            detectKicks(count: step, endTime: time)
             analyzeWindow(time: time, samples: step)
         }
     }
@@ -345,20 +420,6 @@ private final class TapContext {
         let strength = simd_clamp((flux / (fluxAverage * 3 + 1e-6)) - 0.6, .zero, SIMD3(repeating: 1))
         hits = simd_max(hits * SIMD3(repeating: 0.82), strength)
 
-        // Kick: sub+bass flux that is a local maximum (previous window was the peak), well above
-        // its own average, and on a loud enough bass. Confirming one window late (~12 ms) keeps
-        // it on the attack without firing on every wobble.
-        samplesSinceBeat += samples
-        bassPeak = max(bassPeak * 0.9995, current.x)
-        let (twoBack, oneBack) = bassFluxHistory
-        bassFluxHistory = (oneBack, flux.x)
-        let isPeak = oneBack > twoBack && oneBack >= flux.x
-        if isPeak, oneBack > fluxAverage.x * 2.2, current.x > bassPeak * 0.35,
-           samplesSinceBeat > Int(sampleRate * 0.28) {
-            beat &+= 1
-            samplesSinceBeat = 0
-        }
-
         var levels = AudioAnalyzer.Levels()
         levels.bands = smoothed
         levels.spectrum = fine
@@ -369,9 +430,60 @@ private final class TapContext {
         levels.midHit = hits.y
         levels.highHit = hits.z
         levels.loudness = min(rms * 4, 1)
-        levels.beat = beat
         levels.updated = Date()
         analyzer?.push(tap: tapID, time: time ?? 0, levels: levels)
+    }
+
+    /// Runs the newest hop (the tail of `history`) through the kick low-pass and looks for a
+    /// sudden rise of low-end energy. The hit is stamped at the block where the rise crosses the
+    /// threshold, the start of the attack rather than its peak.
+    private func detectKicks(count: Int, endTime: Double?) {
+        guard kickFilter != nil, count > 0, count <= kickInput.count else { return }
+        for i in 0..<count { kickInput[i] = history[Self.size - count + i] }
+        kickInput.withUnsafeBufferPointer { input in
+            kickOutput.withUnsafeMutableBufferPointer { output in
+                var out = UnsafeMutableBufferPointer(rebasing: output[0..<count])
+                kickFilter!.apply(input: UnsafeBufferPointer(rebasing: input[0..<count]), output: &out)
+            }
+        }
+
+        var offset = 0
+        while offset < count {
+            let length = min(Self.kickBlock, count - offset)
+            var meanSquare: Float = 0
+            kickOutput.withUnsafeBufferPointer { buf in
+                vDSP_measqv(buf.baseAddress! + offset, 1, &meanSquare, vDSP_Length(length))
+            }
+            let blockStart = offset
+            offset += length
+            samplesSinceKick += length
+            let db = 10 * log10(max(meanSquare, 1e-12))
+            // Rise against the quietest of the last ~20 ms.
+            let rise = db - (kickLevels.min() ?? db)
+            kickLevels.removeFirst()
+            kickLevels.append(db)
+            kickPeakDB = max(kickPeakDB - Float(length) / sampleRate * 1.5, db)
+            kickRiseAverage += (max(rise, 0) - kickRiseAverage) * 0.01
+
+            let threshold = max(6, kickRiseAverage * 2.5)
+            guard rise > threshold, db > kickPeakDB - 14,
+                  samplesSinceKick > Int(sampleRate * 0.22) else { continue }
+            samplesSinceKick = 0
+            guard let endTime else { continue }
+            let time = endTime - Double(count - blockStart) / Double(sampleRate)
+            let strength = min(1, (rise - threshold) / 12 + 0.5) * min(1, max(0.3, 1 - (kickPeakDB - db) / 14))
+            analyzer?.pushKick(tap: tapID, time: time, strength: strength)
+        }
+    }
+
+    /// RBJ low-pass, the same section twice for a steeper slope.
+    private static func lowpass(cutoff: Double, sampleRate: Double) -> [Double] {
+        let w0 = 2 * Double.pi * cutoff / sampleRate
+        let alpha = sin(w0) / (2 * 0.707)
+        let a0 = 1 + alpha
+        let section = [(1 - cos(w0)) / 2 / a0, (1 - cos(w0)) / a0, (1 - cos(w0)) / 2 / a0,
+                       -2 * cos(w0) / a0, (1 - alpha) / a0]
+        return section + section
     }
 
     private func bandDB(from lowHz: Float, to highHz: Float, binWidth: Float, tilt: Float) -> Float {
