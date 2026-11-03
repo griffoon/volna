@@ -188,6 +188,24 @@ struct YMClient: Sendable {
         try await get("artists/\(id)/brief-info")
     }
 
+    func artistAbout(id: String) async throws -> ArtistAbout {
+        try await get("artists/\(id)/info")
+    }
+
+    /// The artist's own releases, newest first.
+    func artistDiscography(id: String) async throws -> [Album] {
+        struct Page: Decodable { let albums: [Lenient<Album>]? }
+        let page: Page = try await get("artists/\(id)/direct-albums",
+                                       query: ["page": "0", "page-size": "100", "sort-by": "year"])
+        return page.albums?.compactMap(\.value) ?? []
+    }
+
+    func artistConcerts(id: String) async throws -> [Concert] {
+        struct Concerts: Decodable { let concerts: [Lenient<Concert>]? }
+        let result: Concerts = try await get("artists/\(id)/concerts")
+        return result.concerts?.compactMap(\.value) ?? []
+    }
+
     // MARK: Playlists editing
 
     func addToPlaylist(_ track: Track, uid: String, kind: String) async throws {

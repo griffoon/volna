@@ -6,7 +6,14 @@ struct ArtistView: View {
     let artistID: String
     let name: String
     @State private var info: ArtistBriefInfo?
+    @State private var about: ArtistAbout?
+    @State private var discography: [Album] = []
+    @State private var concerts: [Concert] = []
+    @State private var bioExpanded = false
     @State private var error: String?
+
+    /// Bio lines shown before «читать дальше».
+    private static let bioPreviewLines = 4
 
     var body: some View {
         List {
@@ -19,39 +26,60 @@ struct ArtistView: View {
 
             if let tracks = info?.popularTracks, !tracks.isEmpty {
                 Section(header: TerminalLabel(text: "популярное")) {
-                    TrackList(tracks: Array(tracks.prefix(10)))
+                    TrackList(tracks: Array(tracks.prefix(10)), numbered: true)
                 }
             }
 
-            albumShelf("Альбомы", info?.albums)
-            albumShelf("Сборники и участие", info?.alsoAlbums)
+            albumShelf("дискография · \(discography.count)", discography.isEmpty ? info?.albums : discography)
+            albumShelf("сборники и участие", info?.alsoAlbums)
+
+            if !concerts.isEmpty {
+                Section(header: TerminalLabel(text: "концерты · \(concerts.count)")) {
+                    ForEach(concerts) { concert in
+                        ConcertRow(concert: concert).terminalRow()
+                    }
+                }
+            }
+
+            if let text = about?.description, !text.isEmpty {
+                Section(header: TerminalLabel(text: "об артисте")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(text)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(bioExpanded ? nil : Self.bioPreviewLines)
+                        Button(bioExpanded ? "свернуть" : "читать дальше") {
+                            Haptics.tick()
+                            withAnimation(.snappy) { bioExpanded.toggle() }
+                        }
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(Brand.acid)
+                        .buttonStyle(.plain)
+                    }
+                    .terminalRow()
+                }
+            }
 
             if let similar = info?.similarArtists, !similar.isEmpty {
                 Section(header: TerminalLabel(text: "похожие")) {
                     ScrollView(.horizontal) {
-                        LazyHStack(spacing: 16) {
+                        LazyHStack(alignment: .top, spacing: 14) {
                             ForEach(similar.prefix(15)) { artist in
                                 NavigationLink {
                                     ArtistView(artistID: artist.id.value, name: artist.name)
-                                } label: {
-                                    VStack(spacing: 6) {
-                                        CoverImage(uri: artist.cover?.uri, size: 200, corner: 50)
-                                            .frame(width: 96)
-                                        Text(artist.name).font(.footnote).lineLimit(1)
-                                    }
-                                    .frame(width: 100)
-                                }
-                                .buttonStyle(.plain)
+                                } label: { ArtistCard(artist: artist) }
                             }
                         }
                     }
                     .scrollIndicators(.hidden)
+                    .buttonStyle(.plain)
+                    .terminalRow()
                 }
             }
         }
         .terminalPage()
         .overlay {
-            if info == nil, error == nil { ProgressView() }
+            if info == nil, error == nil { ProgressView().tint(Brand.acid) }
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -61,31 +89,46 @@ struct ArtistView: View {
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
             CoverImage(uri: info?.artist.coverURI, size: 800, corner: 0)
+                .grayscale(0.4)
                 .frame(maxWidth: .infinity)
-                .frame(height: 340)
+                .frame(height: 360)
                 .clipped()
-                .overlay(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom))
+                .overlay(LinearGradient(colors: [.clear, Brand.ink], startPoint: .center, endPoint: .bottom))
 
             VStack(alignment: .leading, spacing: 12) {
+                if let listeners = about?.monthlyListeners {
+                    Text("> \(listeners.formatted(.number.notation(.compactName).locale(Locale(identifier: "ru_RU")))) слушателей за месяц")
+                        .font(Brand.mono(12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
                 Text(info?.artist.name ?? name)
-                    .font(Brand.display(36))
+                    .font(Brand.display(38))
                     .foregroundStyle(.white)
-                GlassEffectContainer(spacing: 12) {
-                    HStack(spacing: 12) {
-                        Button {
-                            player.play(info?.popularTracks ?? [])
-                        } label: {
-                            Label("Слушать", systemImage: "play.fill")
-                        }
-                        .buttonStyle(.glassProminent)
-                        Button {
-                            player.startWave(seeds: ["artist:\(artistID)"], title: "Волна: \(name)")
-                        } label: {
-                            Label("Волна", systemImage: "dot.radiowaves.left.and.right")
-                        }
-                        .buttonStyle(.glass)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.5)
+                HStack(spacing: 10) {
+                    Button {
+                        Haptics.thump()
+                        player.play(info?.popularTracks ?? [])
+                    } label: {
+                        Label("СЛУШАТЬ", systemImage: "play.fill")
+                            .font(Brand.mono(13, weight: .bold))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .foregroundStyle(Brand.ink)
+                            .background(Brand.acid, in: .capsule)
+                    }
+                    Button {
+                        Haptics.launch()
+                        player.startWave(seeds: ["artist:\(artistID)"], title: "Волна: \(name)")
+                    } label: {
+                        Label("ВОЛНА", systemImage: "dot.radiowaves.left.and.right")
+                            .font(Brand.mono(13, weight: .bold))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .foregroundStyle(.white)
+                            .overlay(Capsule().stroke(.white.opacity(0.35), lineWidth: 1))
                     }
                 }
+                .buttonStyle(.plain)
             }
             .padding(20)
         }
@@ -94,27 +137,17 @@ struct ArtistView: View {
     @ViewBuilder
     private func albumShelf(_ title: String, _ albums: [Album]?) -> some View {
         if let albums, !albums.isEmpty {
-            Section(header: TerminalLabel(text: title.lowercased())) {
+            Section(header: TerminalLabel(text: title)) {
                 ScrollView(.horizontal) {
-                    LazyHStack(spacing: 14) {
+                    LazyHStack(alignment: .top, spacing: 14) {
                         ForEach(albums) { album in
-                            NavigationLink {
-                                AlbumView(album: album)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    CoverImage(uri: album.coverUri, size: 300, corner: 10).frame(width: 140)
-                                    Text(album.title).font(.footnote.weight(.medium)).lineLimit(1)
-                                    if let year = album.year {
-                                        Text(String(year)).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(width: 140)
-                            }
-                            .buttonStyle(.plain)
+                            NavigationLink { AlbumView(album: album) } label: { AlbumCard(album: album) }
                         }
                     }
                 }
                 .scrollIndicators(.hidden)
+                .buttonStyle(.plain)
+                .terminalRow()
             }
         }
     }
@@ -127,52 +160,47 @@ struct ArtistView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        async let aboutTask = try? client.artistAbout(id: artistID)
+        async let albumsTask = try? client.artistDiscography(id: artistID)
+        async let concertsTask = try? client.artistConcerts(id: artistID)
+        about = await aboutTask
+        discography = await albumsTask ?? []
+        concerts = await concertsTask ?? []
     }
 }
 
-struct AddToPlaylistView: View {
-    @Environment(Session.self) private var session
-    @Environment(Router.self) private var router
-    let track: Track
-    @State private var playlists: [Playlist] = []
-    @State private var adding: String?
-    @State private var error: String?
+private struct ConcertRow: View {
+    let concert: Concert
+
+    private static let ru = Locale(identifier: "ru_RU")
 
     var body: some View {
-        List(playlists) { playlist in
-            Button {
-                Task { await add(to: playlist) }
-            } label: {
-                HStack(spacing: 12) {
-                    CoverImage(uri: playlist.coverURI, size: 100).frame(width: 44, height: 44)
-                    Text(playlist.title)
-                    Spacer()
-                    if adding == playlist.id { ProgressView() }
+        HStack(alignment: .top, spacing: 14) {
+            VStack(spacing: 0) {
+                Text(concert.date.map { $0.formatted(.dateTime.day()) } ?? "--")
+                    .font(Brand.display(22))
+                    .foregroundStyle(.white)
+                Text(concert.date.map { $0.formatted(.dateTime.month(.abbreviated).locale(Self.ru)) } ?? "")
+                    .font(Brand.mono(11, weight: .bold))
+                    .foregroundStyle(Brand.acid)
+            }
+            .frame(width: 52)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(concert.city ?? concert.concertTitle ?? "Концерт")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text([concert.place, concert.date.map { $0.formatted(date: .omitted, time: .shortened) }]
+                        .compactMap { $0 }.joined(separator: " · ").lowercased())
+                    .font(Brand.mono(12))
+                    .foregroundStyle(.white.opacity(0.55))
+                if let link = concert.afishaUrl.flatMap(URL.init(string:)) {
+                    Link("билеты на афише ›", destination: link)
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(Brand.acid)
                 }
             }
-            .buttonStyle(.plain)
-            .disabled(adding != nil)
+            Spacer(minLength: 0)
         }
-        .navigationTitle("В плейлист")
-        .navigationBarTitleDisplayMode(.inline)
-        .overlay {
-            if let error { ErrorBanner(message: error) { self.error = nil } }
-        }
-        .task {
-            guard let client = session.client, let uid = session.uid else { return }
-            playlists = (try? await client.playlists(uid: uid)) ?? []
-        }
-    }
-
-    private func add(to playlist: Playlist) async {
-        guard let client = session.client, let uid = session.uid else { return }
-        adding = playlist.id
-        defer { adding = nil }
-        do {
-            try await client.addToPlaylist(track, uid: uid, kind: playlist.kind.value)
-            Haptics.success(); router.destination = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
+        .padding(.vertical, 4)
     }
 }

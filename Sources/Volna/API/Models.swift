@@ -485,3 +485,55 @@ struct MusicHistory: Decodable, Sendable {
         days = (try? c.decode([Lenient<Day>].self, forKey: .historyTabs))?.compactMap(\.value) ?? []
     }
 }
+
+// MARK: - Artist extras
+
+/// `artists/{id}/info`: bio and monthly listeners.
+struct ArtistAbout: Decodable, Sendable {
+    let description: String?
+    let monthlyListeners: Int?
+
+    private enum CodingKeys: String, CodingKey { case description, stats }
+    private struct Stats: Decodable { let lastMonthListeners: Int? }
+    private struct Text: Decodable { let text: String? }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let plain = try? c.decode(String.self, forKey: .description) {
+            description = plain
+        } else {
+            description = (try? c.decode(Text.self, forKey: .description))?.text
+        }
+        monthlyListeners = (try? c.decode(Stats.self, forKey: .stats))?.lastMonthListeners
+    }
+}
+
+struct Concert: Decodable, Sendable, Identifiable {
+    let id: String
+    let concertTitle: String?
+    let city: String?
+    let place: String?
+    let afishaUrl: String?
+    let date: Date?
+
+    private enum CodingKeys: String, CodingKey { case id, concertTitle, city, place, afishaUrl, datetime }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(FlexibleID.self, forKey: .id).value) ?? UUID().uuidString
+        concertTitle = try? c.decode(String.self, forKey: .concertTitle)
+        city = try? c.decode(String.self, forKey: .city)
+        place = try? c.decode(String.self, forKey: .place)
+        afishaUrl = try? c.decode(String.self, forKey: .afishaUrl)
+        let raw = try? c.decode(String.self, forKey: .datetime)
+        date = raw.flatMap { ISO8601DateFormatter().date(from: $0) ?? Concert.plain.date(from: $0) }
+    }
+
+    /// Some concerts come without a zone: `2026-12-05T19:00:00`.
+    private static let plain: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return f
+    }()
+}
