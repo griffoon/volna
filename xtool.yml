@@ -1,0 +1,7 @@
+version: 1
+bundleID: com.griffoon.volna
+product: Volna
+infoPath: Info.plist
+extensions:
+  - product: VolnaWidget
+    infoPath: VolnaWidget-Info.plist
