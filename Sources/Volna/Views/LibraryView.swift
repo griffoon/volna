@@ -21,6 +21,17 @@ struct LibraryView: View {
                 .terminalRow()
                 .listRowSeparator(.hidden)
 
+                NavigationLink {
+                    HistoryView()
+                } label: {
+                    Label {
+                        Text("История").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    } icon: {
+                        Image(systemName: "clock.arrow.circlepath").foregroundStyle(Brand.acid)
+                    }
+                }
+                .terminalRow()
+
                 Section {
                     ForEach(playlists) { playlist in
                         NavigationLink {

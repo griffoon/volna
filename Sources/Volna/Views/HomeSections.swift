@@ -9,6 +9,7 @@ struct HomeSections: View {
     @State private var events: [Feed.Event] = []
     @State private var releases: [Album] = []
     @State private var chart: [Track] = []
+    @State private var recent: [RecentContext] = []
     @State private var loaded = false
     @State private var loading = false
 
@@ -16,6 +17,7 @@ struct HomeSections: View {
     private static let maxEvents = 4
     private static let maxReleases = 15
     private static let chartLength = 10
+    private static let maxRecent = 12
 
     var body: some View {
         VStack(alignment: .leading, spacing: 34) {
@@ -38,6 +40,14 @@ struct HomeSections: View {
                 .disabled(loading)
             }
             .padding(.horizontal, 20)
+
+            if !recent.isEmpty {
+                shelf("недавно слушал") {
+                    ForEach(recent) { context in
+                        RecentContextLink(context: context) { RecentCard(context: context) }
+                    }
+                }
+            }
 
             if !generated.isEmpty {
                 shelf("собрано для тебя") {
@@ -129,6 +139,7 @@ struct HomeSections: View {
         async let feed = try? client.feed()
         async let releaseIDs = try? client.newReleaseIDs()
         async let chartInfo = try? client.chart()
+        async let history = try? client.musicHistory(fullModels: 30)
 
         if let feed = await feed {
             generated = feed.generatedPlaylists.filter { $0.ready != false }.compactMap(\.data)
@@ -141,6 +152,12 @@ struct HomeSections: View {
         }
         if let info = await chartInfo {
             chart = Array(info.entries.compactMap(\.track).prefix(Self.chartLength))
+        }
+        if let history = await history {
+            var seen = Set<String>()
+            recent = history.days.flatMap(\.groups).compactMap { $0.context.flatMap(RecentContext.init) }
+                .filter { seen.insert($0.id).inserted }
+                .prefix(Self.maxRecent).map { $0 }
         }
         loaded = true
     }

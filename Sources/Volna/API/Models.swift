@@ -397,3 +397,84 @@ struct ChartInfo: Decodable, Sendable {
 
     var entries: [Entry] { chart?.tracks?.compactMap(\.value).filter { $0.track != nil } ?? [] }
 }
+
+// MARK: - Listening history
+
+/// `/music-history`: days of play contexts (album, playlist, artist, wave), each with its tracks.
+struct MusicHistory: Decodable, Sendable {
+    struct Day: Decodable, Sendable {
+        let date: String?
+        let groups: [Group]
+
+        private enum CodingKeys: String, CodingKey { case date, items }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            date = try? c.decode(String.self, forKey: .date)
+            groups = (try? c.decode([Lenient<Group>].self, forKey: .items))?.compactMap(\.value) ?? []
+        }
+    }
+
+    struct Group: Decodable, Sendable {
+        let context: Item?
+        let tracks: [Item]
+
+        private enum CodingKeys: String, CodingKey { case context, tracks }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            context = try? c.decode(Item.self, forKey: .context)
+            tracks = (try? c.decode([Lenient<Item>].self, forKey: .tracks))?.compactMap(\.value) ?? []
+        }
+    }
+
+    struct ItemID: Decodable, Sendable {
+        let id: FlexibleID?
+        let trackId: FlexibleID?
+        let albumId: FlexibleID?
+        let uid: FlexibleID?
+        let kind: FlexibleID?
+        let seeds: [String]?
+    }
+
+    struct Context: Decodable, Sendable {
+        let album: Album?
+        let artist: Artist?
+        let playlist: Playlist?
+        let wave: WaveRef?
+    }
+
+    struct WaveRef: Decodable, Sendable {
+        let name: String?
+        let title: String?
+    }
+
+    /// One entry: a track, or the album / playlist / artist / wave it was played from.
+    struct Item: Decodable, Sendable {
+        let type: String
+        let itemID: ItemID?
+        let track: Track?
+        let context: Context?
+
+        private enum Keys: String, CodingKey { case type, data }
+        private enum DataKeys: String, CodingKey { case itemId, fullModel }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            type = (try? c.decode(String.self, forKey: .type)) ?? ""
+            let data = try? c.nestedContainer(keyedBy: DataKeys.self, forKey: .data)
+            itemID = try? data?.decode(ItemID.self, forKey: .itemId)
+            track = type == "track" ? try? data?.decode(Track.self, forKey: .fullModel) : nil
+            context = type == "track" ? nil : try? data?.decode(Context.self, forKey: .fullModel)
+        }
+    }
+
+    let days: [Day]
+
+    private enum CodingKeys: String, CodingKey { case historyTabs }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        days = (try? c.decode([Lenient<Day>].self, forKey: .historyTabs))?.compactMap(\.value) ?? []
+    }
+}

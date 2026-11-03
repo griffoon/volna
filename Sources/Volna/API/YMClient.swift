@@ -87,6 +87,13 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: History
+
+    /// `fullModels` asks the server to inline full track/album objects for the newest entries.
+    func musicHistory(fullModels: Int = 100) async throws -> MusicHistory {
+        try await get("music-history", query: ["fullModelsCount": String(fullModels)])
+    }
+
     // MARK: Home
 
     func feed() async throws -> Feed {
