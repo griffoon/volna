@@ -126,6 +126,12 @@ struct WaveView: View {
                     Text("волна").font(Brand.display(17)).foregroundStyle(.white)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("Устройства", systemImage: Ynison.shared.snapshot.devices.isEmpty ? "hifispeaker" : "hifispeaker.2.fill") {
+                        Haptics.tap()
+                        router.destination = .devices
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Настройки", systemImage: "gearshape") {
                         router.destination = .settings
                     }
@@ -254,6 +260,24 @@ struct WaveView: View {
             }
 
             transport
+
+            if !player.isPlaying, let device = Ynison.shared.snapshot.activeDevice,
+               !Ynison.shared.snapshot.paused, let other = Ynison.shared.snapshot.current {
+                Button {
+                    Haptics.tap()
+                    router.destination = .devices
+                } label: {
+                    Label("на \(device.title.lowercased()): \(other.title.lowercased())", systemImage: "hifispeaker.2.fill")
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(.black.opacity(0.6), in: .capsule)
+                        .overlay(Capsule().stroke(.white.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
 
             if !waveIsOn, let last = lastWave, let seeds = last.seeds, !seeds.isEmpty {
                 Button {

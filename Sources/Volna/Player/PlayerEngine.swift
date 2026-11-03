@@ -217,6 +217,17 @@ final class PlayerEngine {
         loadCurrent()
     }
 
+    /// Starts `tracks` at a given second, e.g. when taking over playback from another device.
+    func play(_ tracks: [Track], startAt start: Int, position: Double) {
+        reportSkipIfNeeded()
+        wave = nil
+        source = .list
+        queue = tracks
+        index = max(0, min(start, tracks.count - 1))
+        invalidatePreload()
+        loadCurrent(resumeAt: position > 1 ? position : nil, freshListen: true)
+    }
+
     /// My Wave with the user's saved settings, or any rotor seeds (`track:1`, `artist:2`, `activity:x`).
     func startWave(seeds: [String]? = nil, title: String = "Моя волна") {
         guard let client else { return }

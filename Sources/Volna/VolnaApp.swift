@@ -36,6 +36,7 @@ struct VolnaApp: App {
                 session.onDislike = { [player] track in player.noteDislike(track) }
                 await session.refreshAccount()
                 player.uid = session.uid
+                if let token = session.client?.token { Ynison.shared.start(token: token) } else { Ynison.shared.stop() }
             }
             .onOpenURL(perform: handle)
             .task(id: hapticBass) {

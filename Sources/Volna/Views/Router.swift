@@ -10,6 +10,7 @@ final class Router {
         case addToPlaylist(Track)
         case similar(Track)
         case about(Track)
+        case devices
         case settings
         case waveSettings
 
@@ -20,6 +21,7 @@ final class Router {
             case .addToPlaylist(let track): "add-\(track.id.value)"
             case .similar(let track): "similar-\(track.id.value)"
             case .about(let track): "about-\(track.id.value)"
+            case .devices: "devices"
             case .settings: "settings"
             case .waveSettings: "wave-settings"
             }
@@ -52,6 +54,7 @@ struct DestinationView: View {
         case .addToPlaylist(let track): AddToPlaylistView(track: track)
         case .similar(let track): SimilarTracksView(track: track)
         case .about(let track): TrackAboutView(track: track)
+        case .devices: DevicesView()
         case .settings: SettingsView()
         case .waveSettings: WaveSettingsView()
         }
