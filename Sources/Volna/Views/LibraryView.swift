@@ -141,14 +141,19 @@ struct LikedTracksView: View {
         guard let client = session.client, let uid = session.uid else { return }
         loading = true
         defer { loading = false }
+        // Show what we already have straight away, then fetch only tracks liked since.
+        if tracks.isEmpty { tracks = session.likedTrackCache }
         do {
             let refs = try await client.likedTracks(uid: uid).map(\.ref)
-            var loaded: [Track] = []
-            for start in stride(from: 0, to: refs.count, by: Self.batchSize) {
-                let chunk = Array(refs[start..<min(start + Self.batchSize, refs.count)])
-                loaded += try await client.tracks(refs: chunk)
-                tracks = loaded
+            var known = Dictionary(session.likedTrackCache.map { ($0.id.value, $0) }, uniquingKeysWith: { a, _ in a })
+            let missing = refs.filter { known[String($0.split(separator: ":")[0])] == nil }
+            for start in stride(from: 0, to: missing.count, by: Self.batchSize) {
+                let chunk = Array(missing[start..<min(start + Self.batchSize, missing.count)])
+                for track in try await client.tracks(refs: chunk) { known[track.id.value] = track }
+                tracks = refs.compactMap { known[String($0.split(separator: ":")[0])] }
             }
+            tracks = refs.compactMap { known[String($0.split(separator: ":")[0])] }
+            session.likedTrackCache = tracks
             error = nil
         } catch {
             self.error = error.localizedDescription

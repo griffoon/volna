@@ -36,6 +36,8 @@ final class Session {
         uid = nil
         displayName = nil
         likedRefs = []
+        likedAlbums = []
+        likedTrackCache = []
     }
 
     func refreshAccount() async {
@@ -57,6 +59,8 @@ final class Session {
     }
 
     private(set) var likedAlbums: Set<String> = []
+    /// Full liked tracks in order, kept for the session so "Мне нравится" opens instantly.
+    var likedTrackCache: [Track] = []
 
     func loadLikedAlbums() async {
         guard let client, let uid else { return }
