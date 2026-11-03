@@ -87,6 +87,12 @@ struct TrackMenu: View {
                 session.isLiked(track) ? Haptics.tap() : Haptics.success()
                 Task { await session.toggleLike(track) }
             }
+            if let url = track.shareURL {
+                ShareLink(item: url, subject: Text(track.fullTitle),
+                          message: Text("\(track.fullTitle) — \(track.artistLine)")) {
+                    Label("Поделиться", systemImage: "square.and.arrow.up")
+                }
+            }
             Button("Добавить в плейлист", systemImage: "text.badge.plus") {
                 Haptics.tap()
                 router.destination = .addToPlaylist(track)

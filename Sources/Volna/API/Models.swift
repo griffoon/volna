@@ -66,6 +66,12 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
 
     var albumID: FlexibleID? { albums?.first?.id }
 
+    /// Public link that opens in the official app or the web player.
+    var shareURL: URL? {
+        guard let album = albumID else { return URL(string: "https://music.yandex.ru/track/\(id.value)") }
+        return URL(string: "https://music.yandex.ru/album/\(album.value)/track/\(id.value)")
+    }
+
     var cover: String? { coverUri ?? albums?.first?.coverUri }
 
     private enum CodingKeys: String, CodingKey {
