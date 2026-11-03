@@ -172,6 +172,7 @@ final class AudioAnalyzer: @unchecked Sendable {
     func attach(to item: AVPlayerItem, loudness: Loudness? = nil) {
         let asset = item.asset
         let trackGain = AudioProcessing.normalizationGain(for: loudness)
+        let streamKey = (asset as? AVURLAsset).map { VocalStems.key(for: $0.url) }
         let id = nextTap.withLock { value -> Int in
             value += 1
             return value
@@ -182,7 +183,7 @@ final class AudioAnalyzer: @unchecked Sendable {
         }
         Task {
             guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
-                  let tap = Self.makeTap(analyzer: self, tapID: id, trackGain: trackGain)
+                  let tap = Self.makeTap(analyzer: self, tapID: id, trackGain: trackGain, streamKey: streamKey)
             else { return }
             let params = AVMutableAudioMixInputParameters(track: track)
             params.audioTapProcessor = tap
@@ -193,8 +194,8 @@ final class AudioAnalyzer: @unchecked Sendable {
         }
     }
 
-    private static func makeTap(analyzer: AudioAnalyzer, tapID: Int, trackGain: Float) -> MTAudioProcessingTap? {
-        let context = TapContext(analyzer: analyzer, tapID: tapID, trackGain: trackGain)
+    private static func makeTap(analyzer: AudioAnalyzer, tapID: Int, trackGain: Float, streamKey: Int?) -> MTAudioProcessingTap? {
+        let context = TapContext(analyzer: analyzer, tapID: tapID, trackGain: trackGain, streamKey: streamKey)
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
             clientInfo: Unmanaged.passRetained(context).toOpaque(),
@@ -215,8 +216,8 @@ final class AudioAnalyzer: @unchecked Sendable {
                 guard status == noErr else { return }
                 let context = Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                 let count = Int(framesOut.pointee)
-                context.process(bufferList, frames: count)
                 let start = range.start.isNumeric ? range.start.seconds : nil
+                context.process(bufferList, frames: count, startTime: start)
                 context.analyze(bufferList, frames: count, startTime: start)
             }
         )
@@ -284,11 +285,15 @@ private final class TapContext {
 
     // Processing: per-channel EQ filters, rebuilt when the settings version changes.
     private let trackGain: Float
+    /// Identifies the stream for the vocal stem (see VocalSeparator).
+    private let streamKey: Int?
+    private var vocalGain: Float = 0
     private var filters: [vDSP.Biquad<Float>] = []
     private var filterVersion = -1
     private var scratch = [Float]()
 
-    init(analyzer: AudioAnalyzer, tapID: Int, trackGain: Float) {
+    init(analyzer: AudioAnalyzer, tapID: Int, trackGain: Float, streamKey: Int?) {
+        self.streamKey = streamKey
         self.analyzer = analyzer
         self.tapID = tapID
         self.trackGain = trackGain
@@ -308,8 +313,9 @@ private final class TapContext {
     }
 
     /// Equalizer and loudness normalisation, applied in place before the audio reaches the speaker.
-    func process(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
+    func process(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int, startTime: Double?) {
         guard isFloat, !isInterleaved, frames > 0, frames <= scratch.count else { return }
+        removeVocals(bufferList, frames: frames, startTime: startTime)
         let settings = AudioProcessing.shared.snapshot()
         let eqActive = settings.eqEnabled && settings.gains.contains { $0 != 0 }
         var gain: Float = settings.normalize ? trackGain : 1
@@ -344,6 +350,37 @@ private final class TapContext {
             // Hard safety ceiling; the preamp and peak-aware gain keep this rarely hit.
             var lo: Float = -1, hi: Float = 1
             vDSP_vclip(data, 1, &lo, &hi, data, 1, vDSP_Length(frames))
+        }
+    }
+
+    /// «Голос»: subtracts the separated vocal stem, sample-aligned by media time, where it is
+    /// ready. The amount glides across each buffer so moving the slider doesn't click.
+    private func removeVocals(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int, startTime: Double?) {
+        let target: Float
+        let found = streamKey.flatMap { VocalStems.current(for: $0) }
+        if let found, let startTime, abs(found.stem.sampleRate - Double(sampleRate)) < 1 {
+            target = found.gain
+        } else {
+            target = 0
+        }
+        defer { vocalGain = target }
+        guard let found, let startTime, target > 0 || vocalGain > 0 else { return }
+        let stem = found.stem
+        let first = Int((startTime * Double(sampleRate)).rounded())
+        let ready = stem.processed
+        guard first >= 0, first < ready else { return }
+        let count = min(frames, ready - first)
+        let step = (target - vocalGain) / Float(frames)
+
+        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        for (channel, buffer) in buffers.enumerated() {
+            guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+            let vocal = stem.buffers[min(channel, stem.channels - 1)] + first
+            var gain = vocalGain
+            for i in 0..<count {
+                data[i] -= gain * Float(vocal[i])
+                gain += step
+            }
         }
     }
 

@@ -48,6 +48,7 @@ struct NowPlayingView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Session.self) private var session
     @State private var showQueue = false
+    @State private var showVoice = false
     @State private var showLyrics = false
     @State private var pickArtist = false
     @Environment(Router.self) private var router
@@ -223,18 +224,29 @@ struct NowPlayingView: View {
     }
 
     private var actions: some View {
-        HStack {
-            ActionItem(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: "текст", active: showLyrics) {
-                Haptics.tick(); withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
+        VStack(spacing: 14) {
+            HStack {
+                ActionItem(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: "текст", active: showLyrics) {
+                    Haptics.tick(); withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
+                }
+                Spacer()
+                ActionItem(symbol: VocalSeparator.shared.isActive ? "music.mic.circle.fill" : "music.mic",
+                           label: "голос", active: showVoice || VocalSeparator.shared.isActive) {
+                    Haptics.tick(); withAnimation(.spring(duration: 0.4, bounce: 0.2)) { showVoice.toggle() }
+                }
+                Spacer()
+                ActionItem(symbol: "list.bullet", label: "очередь", active: false) { Haptics.tick(); showQueue = true }
+                Spacer()
+                Menu {
+                    sleepMenu
+                } label: {
+                    ActionLabel(symbol: player.sleepTimer == nil ? "moon.zzz" : "moon.zzz.fill", label: "сон",
+                                active: player.sleepTimer != nil)
+                }
             }
-            Spacer()
-            ActionItem(symbol: "list.bullet", label: "очередь", active: false) { Haptics.tick(); showQueue = true }
-            Spacer()
-            Menu {
-                sleepMenu
-            } label: {
-                ActionLabel(symbol: player.sleepTimer == nil ? "moon.zzz" : "moon.zzz.fill", label: "сон",
-                            active: player.sleepTimer != nil)
+            if showVoice {
+                VocalSlider()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .buttonStyle(.plain)

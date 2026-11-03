@@ -39,6 +39,9 @@ struct VolnaApp: App {
                 if let token = session.client?.token { Ynison.shared.start(token: token) } else { Ynison.shared.stop() }
             }
             .onOpenURL(perform: handle)
+            .onChange(of: player.stream, initial: true) {
+                VocalSeparator.shared.streamChanged(player.stream)
+            }
             .task(id: hapticBass) {
                 guard hapticBass else { return }
                 await HapticBass.run(player: player)
