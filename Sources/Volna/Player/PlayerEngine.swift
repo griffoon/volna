@@ -93,6 +93,61 @@ final class PlayerEngine {
                 self.trackEnded()
             }
         })
+        observeSystemPauses()
+    }
+
+    /// Keeps `isPlaying` honest when iOS pauses us: unplugged headphones, calls, Siri, other apps.
+    private func observeSystemPauses() {
+        for player in players {
+            observers.append(player.observe(\.timeControlStatus) { [weak self, weak player] observed, _ in
+                let status = observed.timeControlStatus
+                Task { @MainActor in
+                    guard let self, let player, player === self.activePlayer,
+                          !self.isLoading, !self.isCrossfading, player.currentItem != nil else { return }
+                    let nearEnd = self.duration > 0 && self.elapsed > self.duration - 0.6
+                    if status == .paused, self.isPlaying, !nearEnd {
+                        self.isPlaying = false
+                        self.updateNowPlaying()
+                    } else if status == .playing, !self.isPlaying {
+                        self.isPlaying = true
+                        self.updateNowPlaying()
+                    }
+                }
+            })
+        }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let info = note.userInfo
+            MainActor.assumeIsolated {
+                guard let self,
+                      let raw = info?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      let type = AVAudioSession.InterruptionType(rawValue: raw)
+                else { return }
+                if type == .began {
+                    self.isPlaying = false
+                } else if let optionsRaw = info?[AVAudioSessionInterruptionOptionKey] as? UInt,
+                          AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume),
+                          self.current != nil {
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                    self.activePlayer.play()
+                    self.isPlaying = true
+                }
+                self.updateNowPlaying()
+            }
+        })
+        observers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            MainActor.assumeIsolated {
+                guard let self, raw.flatMap(AVAudioSession.RouteChangeReason.init) == .oldDeviceUnavailable else { return }
+                self.activePlayer.pause()
+                self.isPlaying = false
+                self.updateNowPlaying()
+            }
+        })
     }
 
     func attach(_ client: YMClient?) {
