@@ -87,6 +87,34 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Playlist management
+
+    func createPlaylist(title: String, uid: String, isPublic: Bool) async throws -> Playlist {
+        try await post("users/\(uid)/playlists/create",
+                       form: ["title": title, "visibility": isPublic ? "public" : "private"])
+    }
+
+    func deletePlaylist(kind: String, uid: String) async throws {
+        let _: AnyDecodable = try await post("users/\(uid)/playlists/\(kind)/delete", form: [:])
+    }
+
+    func renamePlaylist(kind: String, uid: String, title: String) async throws -> Playlist {
+        try await post("users/\(uid)/playlists/\(kind)/name", form: ["value": title])
+    }
+
+    func setPlaylistVisibility(kind: String, uid: String, isPublic: Bool) async throws -> Playlist {
+        try await post("users/\(uid)/playlists/\(kind)/visibility", form: ["value": isPublic ? "public" : "private"])
+    }
+
+    /// Removes the track at `index`; `revision` must be the playlist's current one.
+    func removeFromPlaylist(kind: String, uid: String, index: Int, revision: Int) async throws -> Playlist {
+        let diff = [["op": "delete", "from": index, "to": index + 1] as [String: Any]]
+        let json = try JSONSerialization.data(withJSONObject: diff)
+        return try await post("users/\(uid)/playlists/\(kind)/change", form: [
+            "kind": kind, "revision": String(revision), "diff": String(decoding: json, as: UTF8.self),
+        ])
+    }
+
     // MARK: Similar
 
     func similarTracks(trackID: String) async throws -> [Track] {

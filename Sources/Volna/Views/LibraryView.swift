@@ -5,6 +5,8 @@ struct LibraryView: View {
     @Environment(PlayerEngine.self) private var player
     @State private var playlists: [Playlist] = []
     @State private var error: String?
+    @State private var creating = false
+    @State private var newPlaylistTitle = ""
 
     var body: some View {
         NavigationStack {
@@ -56,7 +58,20 @@ struct LibraryView: View {
                         .terminalRow()
                     }
                 } header: {
-                    TerminalLabel(text: "плейлисты · \(playlists.count)")
+                    HStack {
+                        TerminalLabel(text: "плейлисты · \(playlists.count)")
+                        Spacer()
+                        Button {
+                            Haptics.tap()
+                            newPlaylistTitle = ""
+                            creating = true
+                        } label: {
+                            Label("новый", systemImage: "plus")
+                                .font(Brand.mono(12, weight: .bold))
+                                .foregroundStyle(Brand.acid)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .terminalPage()
@@ -66,6 +81,23 @@ struct LibraryView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task { await load() }
             .refreshable { await load() }
+            .alert("Новый плейлист", isPresented: $creating) {
+                TextField("Название", text: $newPlaylistTitle)
+                Button("Отмена", role: .cancel) {}
+                Button("Создать") { Task { await createPlaylist() } }
+            }
+        }
+    }
+
+    private func createPlaylist() async {
+        let title = newPlaylistTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let client = session.client, let uid = session.uid else { return }
+        do {
+            _ = try await client.createPlaylist(title: title, uid: uid, isPublic: false)
+            Haptics.success()
+            await load()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
@@ -175,17 +207,27 @@ struct LikedTracksView: View {
 struct PlaylistView: View {
     @Environment(Session.self) private var session
     @Environment(PlayerEngine.self) private var player
+    @Environment(\.dismiss) private var dismiss
     let playlist: Playlist
     @State private var tracks: [Track] = []
+    @State private var title: String?
+    @State private var isPublic: Bool?
+    @State private var revision: Int?
+    @State private var renaming = false
+    @State private var newTitle = ""
+    @State private var confirmDelete = false
     @State private var error: String?
+
+    /// Editing is offered only for the user's own playlists.
+    private var isOwn: Bool { playlist.uid.value == session.uid }
 
     var body: some View {
         List {
             Section {
                 CollectionHeader(
-                    kind: "playlist",
-                    title: playlist.title,
-                    subtitle: playlist.trackCount.map { "\($0) трк" },
+                    kind: isOwn ? ((isPublic ?? (playlist.visibility == "public")) ? "playlist · public" : "playlist · private") : "playlist",
+                    title: title ?? playlist.title,
+                    subtitle: "\(tracks.count) трк",
                     coverURI: playlist.coverURI
                 ) {
                     player.play(tracks)
@@ -196,13 +238,46 @@ struct PlaylistView: View {
             .terminalRow()
             .listRowSeparator(.hidden)
 
-            TrackList(tracks: tracks, numbered: true)
+            TrackList(tracks: tracks, numbered: true, onRemove: isOwn ? { index in Task { await remove(at: index) } } : nil)
         }
         .terminalPage()
         .overlay {
-            if let error { ErrorBanner(message: error) { Task { await load() } } }
+            if let error { ErrorBanner(message: error) { self.error = nil; Task { await load() } } }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isOwn {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Переименовать", systemImage: "pencil") {
+                            newTitle = title ?? playlist.title
+                            renaming = true
+                        }
+                        let open = isPublic ?? (playlist.visibility == "public")
+                        Button(open ? "Сделать приватным" : "Сделать публичным",
+                               systemImage: open ? "lock" : "globe") {
+                            Task { await setVisibility(!open) }
+                        }
+                        Button("Удалить плейлист", systemImage: "trash", role: .destructive) {
+                            confirmDelete = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .accessibilityLabel("Управление плейлистом")
+                }
+            }
+        }
+        .alert("Новое название", isPresented: $renaming) {
+            TextField("Название", text: $newTitle)
+            Button("Отмена", role: .cancel) {}
+            Button("Сохранить") { Task { await rename() } }
+        }
+        .confirmationDialog("Удалить «\(title ?? playlist.title)»?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Удалить", role: .destructive) { Task { await deletePlaylist() } }
+        } message: {
+            Text("Плейлист пропадёт и в официальном приложении.")
+        }
         .task { await load() }
     }
 
@@ -210,10 +285,57 @@ struct PlaylistView: View {
         guard let client = session.client else { return }
         do {
             let full = try await client.playlist(uid: playlist.uid.value, kind: playlist.kind.value)
+            revision = full.revision
             let shorts = full.tracks ?? []
             let embedded = shorts.compactMap(\.track)
             tracks = embedded.count == shorts.count ? embedded : try await client.tracks(refs: shorts.map(\.ref))
             error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func remove(at index: Int) async {
+        guard let client = session.client, let uid = session.uid, let revision, tracks.indices.contains(index) else { return }
+        let removed = tracks.remove(at: index)
+        Haptics.slam()
+        do {
+            let updated = try await client.removeFromPlaylist(kind: playlist.kind.value, uid: uid, index: index, revision: revision)
+            self.revision = updated.revision
+        } catch {
+            tracks.insert(removed, at: index)
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func rename() async {
+        let value = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, let client = session.client, let uid = session.uid else { return }
+        do {
+            title = try await client.renamePlaylist(kind: playlist.kind.value, uid: uid, title: value).title
+            Haptics.success()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func setVisibility(_ makePublic: Bool) async {
+        guard let client = session.client, let uid = session.uid else { return }
+        do {
+            let updated = try await client.setPlaylistVisibility(kind: playlist.kind.value, uid: uid, isPublic: makePublic)
+            isPublic = (updated.visibility ?? (makePublic ? "public" : "private")) == "public"
+            Haptics.success()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func deletePlaylist() async {
+        guard let client = session.client, let uid = session.uid else { return }
+        do {
+            try await client.deletePlaylist(kind: playlist.kind.value, uid: uid)
+            Haptics.slam()
+            dismiss()
         } catch {
             self.error = error.localizedDescription
         }

@@ -81,6 +81,8 @@ struct TrackList: View {
     @Environment(Session.self) private var session
     let tracks: [Track]
     var numbered = false
+    /// When set (own playlists), a destructive swipe removes the row at that position.
+    var onRemove: ((Int) -> Void)?
 
     var body: some View {
         // Keyed by position: a playlist may hold the same track twice.
@@ -95,6 +97,13 @@ struct TrackList: View {
             .terminalRow()
             .contextMenu { TrackMenu(track: track) }
             .swipeActions(edge: .trailing) {
+                if let onRemove {
+                    Button(role: .destructive) {
+                        onRemove(offset)
+                    } label: {
+                        Label("Убрать", systemImage: "trash")
+                    }
+                }
                 Button {
                     Haptics.success()
                     player.playNext(track)

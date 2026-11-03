@@ -117,6 +117,7 @@ struct Playlist: Decodable, Hashable, Identifiable, Sendable {
     let ogImage: String?
     let tracks: [TrackShort]?
     let revision: Int?
+    let visibility: String?
 
     var id: String { "\(uid.value):\(kind.value)" }
 
