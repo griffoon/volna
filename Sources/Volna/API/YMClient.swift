@@ -133,6 +133,20 @@ struct YMClient: Sendable {
         ])
     }
 
+    // MARK: Credits
+
+    struct Credit: Decodable, Sendable, Hashable {
+        let title: String?
+        let value: String?
+    }
+
+    /// Writers, producers and the like, as Yandex lists them for the track.
+    func credits(trackID: String) async throws -> [Credit] {
+        struct Credits: Decodable { let credits: [Lenient<Credit>]? }
+        let result: Credits = try await get("tracks/\(trackID)/credits")
+        return result.credits?.compactMap(\.value) ?? []
+    }
+
     // MARK: Similar
 
     func similarTracks(trackID: String) async throws -> [Track] {

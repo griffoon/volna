@@ -9,6 +9,7 @@ final class Router {
         case album(Album)
         case addToPlaylist(Track)
         case similar(Track)
+        case about(Track)
         case settings
         case waveSettings
 
@@ -18,6 +19,7 @@ final class Router {
             case .album(let album): "album-\(album.id.value)"
             case .addToPlaylist(let track): "add-\(track.id.value)"
             case .similar(let track): "similar-\(track.id.value)"
+            case .about(let track): "about-\(track.id.value)"
             case .settings: "settings"
             case .waveSettings: "wave-settings"
             }
@@ -49,6 +51,7 @@ struct DestinationView: View {
         case .album(let album): AlbumView(album: album)
         case .addToPlaylist(let track): AddToPlaylistView(track: track)
         case .similar(let track): SimilarTracksView(track: track)
+        case .about(let track): TrackAboutView(track: track)
         case .settings: SettingsView()
         case .waveSettings: WaveSettingsView()
         }
@@ -86,6 +89,10 @@ struct TrackMenu: View {
                    systemImage: session.isLiked(track) ? "heart.slash" : "heart") {
                 session.isLiked(track) ? Haptics.tap() : Haptics.success()
                 Task { await session.toggleLike(track) }
+            }
+            Button("О треке", systemImage: "info.circle") {
+                Haptics.tap()
+                router.destination = .about(track)
             }
             if let url = track.shareURL {
                 ShareLink(item: url, subject: Text(track.fullTitle),

@@ -223,3 +223,82 @@ struct SimilarTracksView: View {
         loaded = true
     }
 }
+
+/// «О треке»: release, length and the people behind it.
+struct TrackAboutView: View {
+    @Environment(Session.self) private var session
+    @Environment(Router.self) private var router
+    let track: Track
+    @State private var credits: [YMClient.Credit] = []
+    @State private var loaded = false
+
+    var body: some View {
+        List {
+            Section {
+                HStack(alignment: .bottom, spacing: 14) {
+                    CoverImage(uri: track.cover, size: 300)
+                        .frame(width: 96, height: 96)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(track.fullTitle)
+                            .font(Brand.display(22))
+                            .foregroundStyle(.white)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.6)
+                        Text(track.artistLine.lowercased())
+                            .font(Brand.mono(13))
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .terminalRow()
+            .listRowSeparator(.hidden)
+
+            Section(header: TerminalLabel(text: "релиз")) {
+                if let album = track.albums?.first {
+                    Button {
+                        router.destination = .album(album)
+                    } label: {
+                        row("альбом", album.title + (album.year.map { " · \($0)" } ?? ""))
+                    }
+                    .buttonStyle(.plain)
+                    .terminalRow()
+                }
+                if let ms = track.durationMs {
+                    row("длительность", Duration.milliseconds(ms).formatted(.time(pattern: .minuteSecond)))
+                        .terminalRow()
+                }
+                row("id", track.id.value).terminalRow()
+            }
+
+            Section(header: TerminalLabel(text: "авторы")) {
+                if credits.isEmpty {
+                    Text(loaded ? "> Яндекс не указал авторов" : "> загружаю…")
+                        .font(Brand.mono(12))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .terminalRow()
+                }
+                ForEach(credits, id: \.self) { credit in
+                    row((credit.title ?? "").lowercased(), credit.value ?? "—").terminalRow()
+                }
+            }
+        }
+        .terminalPage()
+        .navigationTitle("О треке")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if let client = session.client {
+                credits = (try? await client.credits(trackID: track.id.value)) ?? []
+            }
+            loaded = true
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(Brand.mono(11, weight: .bold)).foregroundStyle(Brand.acid)
+            Text(value).font(.system(size: 15)).foregroundStyle(.white).textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
+    }
+}
