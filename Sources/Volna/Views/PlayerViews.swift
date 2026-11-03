@@ -3,6 +3,7 @@ import SwiftUI
 /// Lives in the tab bar accessory slot, so it gets the system Liquid Glass capsule for free.
 struct MiniPlayer: View {
     @Environment(PlayerEngine.self) private var player
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     let open: () -> Void
 
     var body: some View {
@@ -18,7 +19,8 @@ struct MiniPlayer: View {
                 }
             }
             Spacer(minLength: 0)
-            SpectrumText(isPlaying: player.isPlaying)
+            // Compact bar (tab bar minimised): no room for bars, the title matters more.
+            if placement != .inline { SpectrumText(isPlaying: player.isPlaying) }
             Button {
                 Haptics.thump(); player.togglePlay()
             } label: {
@@ -38,7 +40,7 @@ struct MiniPlayer: View {
         .padding(.horizontal, 12)
         .contentShape(.rect)
         .onTapGesture { if player.current != nil { open() } }
-        .modifier(MiniPlayerSwipe())
+        .modifier(MiniPlayerSwipe(open: open))
     }
 }
 
@@ -56,6 +58,35 @@ struct NowPlayingView: View {
         ZStack {
             backdrop
 
+            // The player fills the first screen; the track's actions wait below it and appear
+            // when the player is scrolled up. Pulling down at the top still closes the sheet.
+            ScrollView {
+                VStack(spacing: 0) {
+                    playerPage
+                        .containerRelativeFrame(.vertical)
+                    if let track = player.current {
+                        TrackActionsPanel(track: track)
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 40)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollDisabled(showLyrics)
+        }
+        .presentationBackground(Brand.ink)
+        .sheet(isPresented: $showQueue) {
+            QueueView()
+                .presentationDetents([.medium, .large])
+                .presentationBackground(Brand.ink)
+        }
+        .task(id: player.current?.id) {
+            guard let track = player.current else { return }
+            await lyrics.load(track, client: session.client)
+        }
+    }
+
+    private var playerPage: some View {
             VStack(spacing: 22) {
                 Capsule().fill(.white.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
 
@@ -91,17 +122,6 @@ struct NowPlayingView: View {
             }
             .padding(.horizontal, 24)
             .foregroundStyle(.white)
-        }
-        .presentationBackground(Brand.ink)
-        .sheet(isPresented: $showQueue) {
-            QueueView()
-                .presentationDetents([.medium, .large])
-                .presentationBackground(Brand.ink)
-        }
-        .task(id: player.current?.id) {
-            guard let track = player.current else { return }
-            await lyrics.load(track, client: session.client)
-        }
     }
 
     private var backdrop: some View {
@@ -214,18 +234,19 @@ struct NowPlayingView: View {
                 ActionLabel(symbol: player.sleepTimer == nil ? "moon.zzz" : "moon.zzz.fill", label: "сон",
                             active: player.sleepTimer != nil)
             }
-            Spacer()
-            if let track = player.current {
-                Menu {
-                    TrackMenu(track: track)
-                } label: {
-                    ActionLabel(symbol: "ellipsis", label: "ещё", active: false)
-                }
-            }
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) {
+            // Hint that the track's actions live below; scroll up to reveal them.
+            Image(systemName: "chevron.compact.down")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.35))
+                .offset(y: 30)
+                .opacity(showLyrics ? 0 : 1)
+                .accessibilityHidden(true)
+        }
+        .padding(.bottom, 34)
     }
 
     @ViewBuilder
@@ -367,5 +388,86 @@ struct QueueView: View {
             .navigationTitle("Очередь")
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+/// Everything you can do with the playing track, laid out as rows under the player.
+struct TrackActionsPanel: View {
+    @Environment(PlayerEngine.self) private var player
+    @Environment(Session.self) private var session
+    @Environment(Router.self) private var router
+    let track: Track
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TerminalLabel(text: "трек").padding(.bottom, 8)
+            row("Играть следующим", "text.line.first.and.arrowtriangle.forward") {
+                Haptics.success(); player.playNext(track)
+            }
+            row("В конец очереди", "text.line.last.and.arrowtriangle.forward") {
+                Haptics.success(); player.enqueue(track)
+            }
+            row("Похожие треки", "square.stack.3d.down.right") {
+                Haptics.tap(); router.destination = .similar(track)
+            }
+            row("Волна по треку", "dot.radiowaves.left.and.right") {
+                Haptics.launch()
+                player.startWave(seeds: ["track:\(track.id.value)"], title: "Волна по треку")
+            }
+            row("Добавить в плейлист", "text.badge.plus") {
+                Haptics.tap(); router.destination = .addToPlaylist(track)
+            }
+            if let url = track.shareURL {
+                ShareLink(item: url, subject: Text(track.fullTitle),
+                          message: Text("\(track.fullTitle) — \(track.artistLine)")) {
+                    rowLabel("Поделиться", "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+            }
+            row("О треке", "info.circle") {
+                Haptics.tap(); router.destination = .about(track)
+            }
+
+            TerminalLabel(text: "перейти").padding(.top, 22).padding(.bottom, 8)
+            ForEach(track.artists) { artist in
+                row(artist.name, "music.microphone") {
+                    Haptics.tap(); router.destination = .artist(id: artist.id.value, name: artist.name)
+                }
+            }
+            if let album = track.albums?.first {
+                row(album.title, "square.stack") {
+                    Haptics.tap(); router.destination = .album(album)
+                }
+            }
+
+            row("Не рекомендовать", "hand.thumbsdown", destructive: true) {
+                Haptics.slam(); Task { await session.dislike(track) }
+            }
+            .padding(.top, 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func row(_ title: String, _ symbol: String, destructive: Bool = false,
+                     action: @escaping () -> Void) -> some View {
+        Button(action: action) { rowLabel(title, symbol, destructive: destructive) }
+            .buttonStyle(.plain)
+    }
+
+    private func rowLabel(_ title: String, _ symbol: String, destructive: Bool = false) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(destructive ? Color(red: 1, green: 0.45, blue: 0.45) : Brand.acid)
+                .frame(width: 26)
+            Text(title)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(destructive ? Color(red: 1, green: 0.45, blue: 0.45) : .white)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 48)
+        .contentShape(.rect)
+        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }
     }
 }

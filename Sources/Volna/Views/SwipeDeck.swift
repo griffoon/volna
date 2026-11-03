@@ -5,6 +5,9 @@ import SwiftUI
 struct CoverDeck: View {
     @Environment(PlayerEngine.self) private var player
     @State private var drag: CGFloat = 0
+    /// Decided on the first movement: horizontal drags move the card, vertical ones are left to
+    /// the sheet so pulling the cover down closes the player.
+    @State private var horizontal: Bool?
 
     private static let gap: CGFloat = 28
     /// Share of the width (or flick speed) that commits a switch.
@@ -35,9 +38,13 @@ struct CoverDeck: View {
             }
             .frame(width: w, height: w)
             .contentShape(.rect)
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
                     .onChanged { value in
+                        if horizontal == nil {
+                            horizontal = abs(value.translation.width) > abs(value.translation.height)
+                        }
+                        guard horizontal == true else { return }
                         // Resist when there is nothing on that side.
                         let x = value.translation.width
                         let blocked = (x < 0 && player.nextTrack == nil && !player.isWave) || (x > 0 && player.previousTrack == nil)
@@ -47,6 +54,8 @@ struct CoverDeck: View {
                         drag = newDrag
                     }
                     .onEnded { value in
+                        defer { horizontal = nil }
+                        guard horizontal == true else { return }
                         let flick = value.predictedEndTranslation.width
                         if (drag < -w * Self.threshold || flick < -w * 0.6), player.nextTrack != nil || player.isWave {
                             Haptics.thump(); commit(to: -(w + Self.gap)) { player.next() }
@@ -101,8 +110,11 @@ struct CoverDeck: View {
 struct MiniPlayerSwipe: ViewModifier {
     @Environment(PlayerEngine.self) private var player
     @State private var drag: CGFloat = 0
+    /// Swiping the bar up opens the full player, same as a tap.
+    let open: () -> Void
 
     private static let commitDistance: CGFloat = 80
+    private static let openDistance: CGFloat = 30
 
     func body(content: Content) -> some View {
         content
@@ -123,7 +135,12 @@ struct MiniPlayerSwipe: ViewModifier {
                     }
                     .onEnded { value in
                         let x = value.translation.width
-                        if x < -Self.commitDistance, player.nextTrack != nil || player.isWave {
+                        let y = value.translation.height
+                        if abs(y) > abs(x), y < -Self.openDistance || value.predictedEndTranslation.height < -Self.openDistance * 3,
+                           player.current != nil {
+                            Haptics.tap()
+                            open()
+                        } else if x < -Self.commitDistance, player.nextTrack != nil || player.isWave {
                             Haptics.thump()
                             player.next()
                         } else if x > Self.commitDistance, player.previousTrack != nil {

@@ -193,10 +193,14 @@ private final class TapContext {
     private var magnitudes = [Float](repeating: 0, count: TapContext.size / 2)
 
     // Adaptive range per band: floor and ceiling in dB that follow the track's own dynamics.
-    private var floorDB = [Float](repeating: -60, count: AudioAnalyzer.bandCount)
-    private var ceilDB = [Float](repeating: -20, count: AudioAnalyzer.bandCount)
-    private var fineFloor = [Float](repeating: -60, count: AudioAnalyzer.spectrumCount)
-    private var fineCeil = [Float](repeating: -20, count: AudioAnalyzer.spectrumCount)
+    // Running mean and spread in dB per band (see `adapt`).
+    private var floorDB = [Float](repeating: -40, count: AudioAnalyzer.bandCount)
+    private var ceilDB = [Float](repeating: 6, count: AudioAnalyzer.bandCount)
+    private var fineFloor = [Float](repeating: -40, count: AudioAnalyzer.spectrumCount)
+    private var fineCeil = [Float](repeating: 6, count: AudioAnalyzer.spectrumCount)
+    /// Recent bass flux values, to require a real local peak before calling a kick.
+    private var bassFluxHistory: (Float, Float) = (0, 0)
+    private var bassPeak: Float = 0.001
     private var smoothed = [Float](repeating: 0, count: AudioAnalyzer.bandCount)
     private var fine = [Float](repeating: 0, count: AudioAnalyzer.spectrumCount)
     // Onset detection: energy per range and its running average.
@@ -341,8 +345,16 @@ private final class TapContext {
         let strength = simd_clamp((flux / (fluxAverage * 3 + 1e-6)) - 0.6, .zero, SIMD3(repeating: 1))
         hits = simd_max(hits * SIMD3(repeating: 0.82), strength)
 
+        // Kick: sub+bass flux that is a local maximum (previous window was the peak), well above
+        // its own average, and on a loud enough bass. Confirming one window late (~12 ms) keeps
+        // it on the attack without firing on every wobble.
         samplesSinceBeat += samples
-        if strength.x > 0.35, samplesSinceBeat > Int(sampleRate * 0.25) {
+        bassPeak = max(bassPeak * 0.9995, current.x)
+        let (twoBack, oneBack) = bassFluxHistory
+        bassFluxHistory = (oneBack, flux.x)
+        let isPeak = oneBack > twoBack && oneBack >= flux.x
+        if isPeak, oneBack > fluxAverage.x * 2.2, current.x > bassPeak * 0.35,
+           samplesSinceBeat > Int(sampleRate * 0.28) {
             beat &+= 1
             samplesSinceBeat = 0
         }
@@ -372,13 +384,14 @@ private final class TapContext {
         return 20 * log10(max(peak * tilt / Float(Self.size), 1e-7))
     }
 
-    /// Maps dB into 0…1 against a floor and ceiling that track this song: the ceiling jumps up to
-    /// new peaks and sinks slowly, the floor follows quiet parts, so every track uses the full range.
-    private func adapt(_ db: Float, floor: inout Float, ceil: inout Float, dt: Float) -> Float {
-        ceil = db > ceil ? db : ceil - 3 * dt
-        floor = db < floor ? db : floor + 2 * dt
-        let span = max(ceil - floor, 12)
-        floor = min(floor, ceil - 12)
-        return min(max((db - floor) / span, 0), 1)
+    /// Maps dB into 0…1 around this song's own typical level: `mean` is a ~2 s running average and
+    /// `spread` its running deviation. Typical moments sit near 0.35, hits rise towards 1, quiet
+    /// parts fall to 0 — instead of everything living near the top.
+    private func adapt(_ db: Float, floor mean: inout Float, ceil spread: inout Float, dt: Float) -> Float {
+        let k = min(1, dt / 2)
+        mean += (db - mean) * k
+        spread += (abs(db - mean) - spread) * k
+        let deviation = max(spread, 3)
+        return min(max(0.35 + (db - mean) / (deviation * 3.2), 0), 1)
     }
 }
