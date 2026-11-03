@@ -14,6 +14,10 @@ let package = Package(
     targets: [
         .target(
             name: "Volna",
+            resources: [
+                .copy("Resources/DelaGothicOne-Regular.ttf"),
+                .copy("Resources/OFL-DelaGothicOne.txt"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

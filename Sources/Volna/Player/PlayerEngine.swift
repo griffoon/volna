@@ -28,17 +28,28 @@ final class PlayerEngine {
     private(set) var duration: Double = 0
     private(set) var source: Source = .list
     private(set) var sleepTimer: SleepTimer?
+    /// Codec and bitrate of what is playing now, for the HUD.
+    private(set) var stream: StreamSource?
     var errorMessage: String?
+
+    /// `sess#7f3a · batch 07` while a rotor session runs.
+    var waveTag: String? { wave?.tag }
+    /// Latest reports to Yandex and how they went, newest last.
+    private(set) var reportLog: [String] = []
+    /// Needed for `/play-audio`; set once the account is known.
+    var uid: String?
 
     var current: Track? { queue.indices.contains(index) ? queue[index] : nil }
     var upNext: ArraySlice<Track> { queue.indices.contains(index + 1) ? queue[(index + 1)...] : [] }
+    var nextTrack: Track? { queue.indices.contains(index + 1) ? queue[index + 1] : nil }
+    var previousTrack: Track? { queue.indices.contains(index - 1) ? queue[index - 1] : nil }
     var isWave: Bool { if case .wave = source { true } else { false } }
 
     private let players = [AVPlayer(), AVPlayer()]
     private var active = 0
     private var activePlayer: AVPlayer { players[active] }
     private var standbyPlayer: AVPlayer { players[1 - active] }
-    private var preloaded: (trackID: FlexibleID, item: AVPlayerItem)?
+    private var preloaded: (trackID: FlexibleID, item: AVPlayerItem, source: StreamSource)?
     private var preloadTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var fadeTask: Task<Void, Never>?
@@ -49,6 +60,11 @@ final class PlayerEngine {
     private var wave: WaveSession?
     private var observers: [Any] = []
     private var artwork: (id: String, image: MPMediaItemArtwork)?
+    /// The listen in progress, reported to `/play-audio` when it starts and when it ends.
+    private var listen: (track: Track, playID: String, from: String)?
+
+    private static let logLength = 6
+    private static let collectionFrom = "mobile-own_collection-default"
 
     /// Refill My Wave when this many tracks are left.
     private static let waveRefillThreshold = 2
@@ -103,6 +119,7 @@ final class PlayerEngine {
         reportSkipIfNeeded()
         let seeds = seeds ?? (["user:onyourwave"] + Preferences.waveSeeds)
         let session = WaveSession(client: client, seeds: seeds)
+        session.onLog = { [weak self] line in self?.log(line) }
         wave = session
         source = .wave(title: title)
         queue = []
@@ -121,6 +138,51 @@ final class PlayerEngine {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    // MARK: Listening reports
+
+    private func beginListen(_ track: Track) {
+        let from = isWave ? YMClient.waveFrom : Self.collectionFrom
+        listen = (track, UUID().uuidString.lowercased(), from)
+        reportListen(played: 0, position: 0, label: nil)
+    }
+
+    private func endListen() {
+        guard listen != nil else { return }
+        reportListen(played: elapsed, position: elapsed, label: "play-audio \(Int(elapsed))s")
+        listen = nil
+    }
+
+    private func reportListen(played: Double, position: Double, label: String?) {
+        guard let listen, let client, let uid else {
+            if let label { log("\(label) · no uid") }
+            return
+        }
+        Task {
+            do {
+                try await client.playAudio(track: listen.track, uid: uid, from: listen.from,
+                                           playID: listen.playID, played: played, position: position)
+                if let label { log("\(label) · ok") }
+            } catch {
+                log("\(label ?? "play-audio start") · \(WaveSession.describe(error))")
+            }
+        }
+    }
+
+    private func log(_ line: String) {
+        reportLog.append(line)
+        if reportLog.count > Self.logLength { reportLog.removeFirst(reportLog.count - Self.logLength) }
+    }
+
+    /// Likes and dislikes are part of what My Wave learns from.
+    func noteLike(_ track: Track, liked: Bool) {
+        if isWave { wave?.liked(track, liked) }
+    }
+
+    func noteDislike(_ track: Track) {
+        if isWave { wave?.disliked(track) }
+        if current?.id == track.id { next() }
     }
 
     // MARK: Queue editing
@@ -158,6 +220,16 @@ final class PlayerEngine {
             seek(to: 0)
             return
         }
+        endListen()
+        index -= 1
+        invalidatePreload()
+        loadCurrent()
+    }
+
+    /// Swipe-back: always the previous track, unlike the button which first restarts this one.
+    func goBack() {
+        guard index > 0 else { return seek(to: 0) }
+        reportSkipIfNeeded()
         index -= 1
         invalidatePreload()
         loadCurrent()
@@ -212,6 +284,7 @@ final class PlayerEngine {
     // MARK: Advancing
 
     private func trackEnded() {
+        endListen()
         if let track = current { wave?.finished(track, played: elapsed) }
         if sleepTimer == .endOfTrack {
             sleepTimer = nil
@@ -225,14 +298,23 @@ final class PlayerEngine {
 
     private func advance() {
         guard index + 1 < queue.count else {
-            if isWave { refillWave(thenAdvance: true) } else { stopAtEnd() }
+            if isWave {
+                refillWave(thenAdvance: true)
+            } else if let last = current {
+                // The music never stops: a finished list rolls into a wave seeded by its last track.
+                startWave(seeds: ["track:\(last.id.value)"], title: "Волна по треку")
+            } else {
+                stopAtEnd()
+            }
             return
         }
         index += 1
         loadCurrent()
     }
 
+    /// Called whenever the current track is abandoned before its end.
     private func reportSkipIfNeeded() {
+        endListen()
         guard let track = current, isWave else { return }
         wave?.skipped(track, played: elapsed)
     }
@@ -250,6 +332,7 @@ final class PlayerEngine {
 
         if let ready = preloaded, ready.trackID == track.id, standbyPlayer.currentItem === ready.item {
             preloaded = nil
+            stream = ready.source
             let old = activePlayer
             active = 1 - active
             old.pause()
@@ -263,10 +346,11 @@ final class PlayerEngine {
         loadTask = Task {
             guard let client else { return }
             do {
-                let url = try await StreamResolver(client: client).streamURL(for: track.id.value, quality: quality)
+                let source = try await StreamResolver(client: client).stream(for: track.id.value, quality: quality)
                 guard !Task.isCancelled else { return }
                 standbyPlayer.pause()
-                activePlayer.replaceCurrentItem(with: AVPlayerItem(url: url))
+                stream = source
+                activePlayer.replaceCurrentItem(with: Self.makeItem(source.url))
                 startActive()
             } catch {
                 guard !Task.isCancelled else { return }
@@ -282,7 +366,10 @@ final class PlayerEngine {
         isPlaying = true
         isLoading = false
         updateNowPlaying()
-        if let track = current { wave?.started(track) }
+        if let track = current {
+            wave?.started(track)
+            beginListen(track)
+        }
         if isWave, queue.count - index <= Self.waveRefillThreshold {
             refillWave(thenAdvance: false)
         }
@@ -295,16 +382,16 @@ final class PlayerEngine {
         let quality = Preferences.quality
         preloadTask?.cancel()
         preloadTask = Task {
-            guard let url = try? await StreamResolver(client: client).streamURL(for: next.id.value, quality: quality),
+            guard let source = try? await StreamResolver(client: client).stream(for: next.id.value, quality: quality),
                   !Task.isCancelled,
                   queue.indices.contains(index + 1), queue[index + 1].id == next.id
             else { return }
-            let item = AVPlayerItem(url: url)
+            let item = Self.makeItem(source.url)
             item.preferredForwardBufferDuration = 30
             standbyPlayer.replaceCurrentItem(with: item)
             standbyPlayer.volume = 0
             standbyPlayer.pause()
-            preloaded = (next.id, item)
+            preloaded = (next.id, item, source)
         }
     }
 
@@ -331,6 +418,12 @@ final class PlayerEngine {
         }
     }
 
+    private static func makeItem(_ url: URL) -> AVPlayerItem {
+        let item = AVPlayerItem(url: url)
+        AudioAnalyzer.shared.attach(to: item)
+        return item
+    }
+
     // MARK: Crossfade
 
     private func beginCrossfade(over seconds: Double) {
@@ -338,8 +431,10 @@ final class PlayerEngine {
               standbyPlayer.currentItem === ready.item, let finishing = current
         else { return }
         isCrossfading = true
+        endListen()
         wave?.finished(finishing, played: elapsed)
         preloaded = nil
+        stream = ready.source
 
         let outgoing = activePlayer
         active = 1 - active
@@ -350,7 +445,10 @@ final class PlayerEngine {
         elapsed = 0
         duration = Double(current?.durationMs ?? 0) / 1000
         updateNowPlaying()
-        if let track = current { wave?.started(track) }
+        if let track = current {
+            wave?.started(track)
+            beginListen(track)
+        }
 
         fadeTask = Task {
             let steps = max(1, Int(seconds * 20))
@@ -391,6 +489,7 @@ final class PlayerEngine {
     }
 
     private func stop() {
+        endListen()
         loadTask?.cancel()
         fadeTask?.cancel()
         invalidatePreload()

@@ -2,50 +2,57 @@ import SwiftUI
 
 struct LibraryView: View {
     @Environment(Session.self) private var session
+    @Environment(PlayerEngine.self) private var player
     @State private var playlists: [Playlist] = []
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    NavigationLink {
-                        LikedTracksView()
-                    } label: {
-                        Label {
-                            Text("Мне нравится").font(.headline)
-                        } icon: {
-                            Image(systemName: "heart.fill")
-                                .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
-                                .background(.pink.gradient, in: .rect(cornerRadius: 8))
-                        }
-                    }
-                }
+                TerminalHeader(title: "Коллекция", caption: session.displayName.map { "user: \($0.lowercased())" })
+                    .terminalRow()
+                    .listRowSeparator(.hidden)
 
-                Section("Плейлисты") {
+                NavigationLink {
+                    LikedTracksView()
+                } label: {
+                    LikedHero(count: session.likedRefs.count)
+                }
+                .terminalRow()
+                .listRowSeparator(.hidden)
+
+                Section {
                     ForEach(playlists) { playlist in
                         NavigationLink {
                             PlaylistView(playlist: playlist)
                         } label: {
-                            HStack(spacing: 12) {
-                                CoverImage(uri: playlist.coverURI, size: 100)
-                                    .frame(width: 44, height: 44)
-                                VStack(alignment: .leading) {
+                            HStack(spacing: 14) {
+                                CoverImage(uri: playlist.coverURI, size: 120)
+                                    .frame(width: 52, height: 52)
+                                VStack(alignment: .leading, spacing: 4) {
                                     Text(playlist.title)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(2)
                                     if let count = playlist.trackCount {
-                                        Text("\(count) треков").font(.caption).foregroundStyle(.secondary)
+                                        Text("[\(count) трк]")
+                                            .font(Brand.mono(11))
+                                            .foregroundStyle(.white.opacity(0.45))
                                     }
                                 }
                             }
                         }
+                        .terminalRow()
                     }
+                } header: {
+                    TerminalLabel(text: "плейлисты · \(playlists.count)")
                 }
             }
+            .terminalPage()
             .overlay {
                 if let error { ErrorBanner(message: error) { Task { await load() } } }
             }
-            .navigationTitle("Коллекция")
+            .toolbar(.hidden, for: .navigationBar)
             .task { await load() }
             .refreshable { await load() }
         }
@@ -62,6 +69,35 @@ struct LibraryView: View {
     }
 }
 
+/// "Мне нравится" as a big terminal block: count in display type, acid accent.
+private struct LikedHero: View {
+    let count: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("// мне нравится")
+                    .font(Brand.mono(12, weight: .bold))
+                    .foregroundStyle(Brand.acid)
+                Spacer()
+                Image(systemName: "heart.fill").foregroundStyle(Brand.acid)
+            }
+            Text(count > 0 ? count.formatted(.number.grouping(.never)) : "····")
+                .font(Brand.display(64))
+                .foregroundStyle(.white)
+                .contentTransition(.numericText())
+            Text("треков в коллекции")
+                .font(Brand.mono(12))
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.04), in: .rect(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Brand.acid.opacity(0.5), lineWidth: 1))
+        .padding(.vertical, 6)
+    }
+}
+
 struct LikedTracksView: View {
     @Environment(Session.self) private var session
     @Environment(PlayerEngine.self) private var player
@@ -74,22 +110,30 @@ struct LikedTracksView: View {
 
     var body: some View {
         List {
+            Section {
+                VStack(alignment: .leading, spacing: 16) {
+                    TerminalHeader(title: "Мне нравится",
+                                   caption: loading ? "loading \(tracks.count)/\(session.likedRefs.count)…" : "\(tracks.count) трк")
+                    TerminalActions {
+                        player.play(tracks)
+                    } shuffle: {
+                        player.play(tracks.shuffled())
+                    }
+                    .disabled(tracks.isEmpty)
+                }
+                .padding(.bottom, 8)
+            }
+            .terminalRow()
+            .listRowSeparator(.hidden)
+
             TrackList(tracks: tracks)
         }
-        .listStyle(.plain)
+        .terminalPage()
         .overlay {
-            if loading && tracks.isEmpty { ProgressView() }
+            if loading && tracks.isEmpty { ProgressView().tint(Brand.acid) }
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
-        .navigationTitle("Мне нравится")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Перемешать", systemImage: "shuffle") {
-                    player.play(tracks.shuffled())
-                }
-                .disabled(tracks.isEmpty)
-            }
-        }
+        .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
 
@@ -123,8 +167,9 @@ struct PlaylistView: View {
         List {
             Section {
                 CollectionHeader(
+                    kind: "playlist",
                     title: playlist.title,
-                    subtitle: playlist.trackCount.map { "\($0) треков" },
+                    subtitle: playlist.trackCount.map { "\($0) трк" },
                     coverURI: playlist.coverURI
                 ) {
                     player.play(tracks)
@@ -132,12 +177,12 @@ struct PlaylistView: View {
                     player.play(tracks.shuffled())
                 }
             }
+            .terminalRow()
             .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
 
-            TrackList(tracks: tracks)
+            TrackList(tracks: tracks, numbered: true)
         }
-        .listStyle(.plain)
+        .terminalPage()
         .overlay {
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
@@ -164,33 +209,99 @@ struct AlbumView: View {
     @Environment(PlayerEngine.self) private var player
     let album: Album
     @State private var tracks: [Track] = []
+    @State private var moreFromArtist: [Album] = []
+    @State private var similarArtists: [Artist] = []
     @State private var error: String?
+
+    private var mainArtist: Artist? { album.artists?.first }
 
     var body: some View {
         List {
             Section {
-                CollectionHeader(
-                    title: album.title,
-                    subtitle: [album.artists?.map(\.name).joined(separator: ", "), album.year.map(String.init)]
-                        .compactMap { $0 }.joined(separator: " · "),
-                    coverURI: album.coverUri
-                ) {
-                    player.play(tracks)
-                } shuffle: {
-                    player.play(tracks.shuffled())
+                VStack(alignment: .leading, spacing: 12) {
+                    CollectionHeader(
+                        kind: "album",
+                        title: album.title,
+                        subtitle: [album.artists?.map(\.name).joined(separator: ", "), album.year.map(String.init)]
+                            .compactMap { $0 }.joined(separator: " · "),
+                        coverURI: album.coverUri
+                    ) {
+                        player.play(tracks)
+                    } shuffle: {
+                        player.play(tracks.shuffled())
+                    }
+                    albumActions
                 }
             }
+            .terminalRow()
             .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
 
-            TrackList(tracks: tracks)
+            TrackList(tracks: tracks, numbered: true)
+
+            if !moreFromArtist.isEmpty, let artist = mainArtist {
+                Section {
+                    shelf {
+                        ForEach(moreFromArtist) { other in
+                            NavigationLink { AlbumView(album: other) } label: { AlbumCard(album: other) }
+                        }
+                    }
+                } header: {
+                    TerminalLabel(text: "ещё у \(artist.name.lowercased())")
+                }
+            }
+
+            if !similarArtists.isEmpty {
+                Section {
+                    shelf {
+                        ForEach(similarArtists) { artist in
+                            NavigationLink {
+                                ArtistView(artistID: artist.id.value, name: artist.name)
+                            } label: { ArtistCard(artist: artist) }
+                        }
+                    }
+                } header: {
+                    TerminalLabel(text: "похожие артисты")
+                }
+            }
         }
-        .listStyle(.plain)
+        .terminalPage()
         .overlay {
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    private var albumActions: some View {
+        let liked = session.isLiked(album: album)
+        return HStack(spacing: 10) {
+            Button {
+                Task { await session.toggleLike(album: album) }
+            } label: {
+                Label(liked ? "в коллекции" : "в коллекцию", systemImage: liked ? "heart.fill" : "heart")
+                    .foregroundStyle(liked ? Brand.acid : .white)
+            }
+            Button {
+                player.startWave(seeds: ["album:\(album.id.value)"], title: "Волна: \(album.title)")
+            } label: {
+                Label("волна по альбому", systemImage: "dot.radiowaves.left.and.right")
+            }
+        }
+        .font(Brand.mono(12, weight: .bold))
+        .foregroundStyle(.white)
+        .buttonStyle(.plain)
+        .labelStyle(.titleAndIcon)
+        .sensoryFeedback(.success, trigger: liked)
+    }
+
+    private func shelf<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: 14) { content() }
+        }
+        .scrollIndicators(.hidden)
+        .terminalRow()
+        .listRowSeparator(.hidden)
+        .buttonStyle(.plain)
     }
 
     private func load() async {
@@ -201,10 +312,18 @@ struct AlbumView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        if session.likedAlbums.isEmpty { await session.loadLikedAlbums() }
+        if let artist = mainArtist, let brief = try? await client.artistBrief(id: artist.id.value) {
+            let others = (brief.albums ?? []) + (brief.alsoAlbums ?? [])
+            moreFromArtist = Array(others.filter { $0.id != album.id }.prefix(12))
+            similarArtists = Array((brief.similarArtists ?? []).prefix(12))
+        }
     }
 }
 
+/// Cover on the left, type tag and Dela title on the right, actions below.
 struct CollectionHeader: View {
+    let kind: String
     let title: String
     let subtitle: String?
     let coverURI: String?
@@ -212,31 +331,29 @@ struct CollectionHeader: View {
     let shuffle: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            CoverImage(uri: coverURI, size: 600, corner: 14)
-                .frame(width: 230)
-                .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
-            Text(title)
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
-            }
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    Button(action: play) {
-                        Label("Слушать", systemImage: "play.fill").frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .bottom, spacing: 14) {
+                CoverImage(uri: coverURI, size: 400)
+                    .frame(width: 128, height: 128)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("> type: \(kind)")
+                        .font(Brand.mono(11, weight: .medium))
+                        .foregroundStyle(Brand.acid)
+                    Text(title)
+                        .font(Brand.display(24))
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.6)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle.lowercased())
+                            .font(Brand.mono(12))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(2)
                     }
-                    .buttonStyle(.glassProminent)
-                    Button(action: shuffle) {
-                        Label("Вперемешку", systemImage: "shuffle").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glass)
                 }
-                .controlSize(.large)
             }
+            TerminalActions(play: play, shuffle: shuffle)
         }
-        .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
     }
 }

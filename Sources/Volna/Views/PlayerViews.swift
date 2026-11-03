@@ -10,14 +10,15 @@ struct MiniPlayer: View {
             CoverImage(uri: player.current?.cover, size: 100, corner: 6)
                 .frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 0) {
-                Text(player.current?.fullTitle ?? "Ничего не играет")
-                    .font(.subheadline.weight(.semibold))
+                ScrambleText(text: player.current?.fullTitle ?? "Ничего не играет", duration: 0.4)
+                    .font(Brand.mono(13, weight: .bold))
                     .lineLimit(1)
                 if let artist = player.current?.artistLine {
-                    Text(artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(artist).font(Brand.mono(11)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
+            SpectrumText(isPlaying: player.isPlaying)
             Button {
                 player.togglePlay()
             } label: {
@@ -37,15 +38,17 @@ struct MiniPlayer: View {
         .padding(.horizontal, 12)
         .contentShape(.rect)
         .onTapGesture { if player.current != nil { open() } }
+        .modifier(MiniPlayerSwipe())
     }
 }
 
 struct NowPlayingView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Session.self) private var session
-    @State private var scrubbing: Double?
     @State private var showQueue = false
     @State private var showLyrics = false
+    @State private var pickArtist = false
+    @Environment(Router.self) private var router
     @State private var lyrics = LyricsLoader()
     @Namespace private var coverSpace
 
@@ -53,12 +56,20 @@ struct NowPlayingView: View {
         ZStack {
             backdrop
 
-            VStack(spacing: 24) {
-                Capsule().fill(.white.opacity(0.4)).frame(width: 40, height: 5).padding(.top, 10)
+            VStack(spacing: 22) {
+                Capsule().fill(.white.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
+
+                HStack {
+                    Text(player.stream.map { "> \($0.label.lowercased())" } ?? "> buffering…")
+                    Spacer()
+                    SpectrumText(isPlaying: player.isPlaying)
+                }
+                .font(Brand.mono(11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
 
                 if showLyrics {
                     HStack(spacing: 14) {
-                        CoverImage(uri: player.current?.cover, size: 200, corner: 8)
+                        CoverImage(uri: player.current?.cover, size: 200)
                             .matchedGeometryEffect(id: "cover", in: coverSpace)
                             .frame(width: 60, height: 60)
                         titleRow
@@ -67,25 +78,25 @@ struct NowPlayingView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 } else {
                     Spacer(minLength: 0)
-                    CoverImage(uri: player.current?.cover, size: 800, corner: 18)
+                    CoverDeck()
                         .matchedGeometryEffect(id: "cover", in: coverSpace)
-                        .padding(.horizontal, 28)
-                        .scaleEffect(player.isPlaying ? 1 : 0.86)
-                        .shadow(color: .black.opacity(0.4), radius: 30, y: 18)
-                        .animation(.spring(duration: 0.5, bounce: 0.35), value: player.isPlaying)
+                        .padding(.horizontal, 32)
                     Spacer(minLength: 0)
                     titleRow
                 }
 
-                progress
+                TerminalScrubber(elapsed: player.elapsed, duration: player.duration) { player.seek(to: $0) }
                 controls
-                bottomBar
+                actions
             }
             .padding(.horizontal, 24)
             .foregroundStyle(.white)
         }
+        .presentationBackground(Brand.ink)
         .sheet(isPresented: $showQueue) {
-            QueueView().presentationDetents([.medium, .large])
+            QueueView()
+                .presentationDetents([.medium, .large])
+                .presentationBackground(Brand.ink)
         }
         .task(id: player.current?.id) {
             guard let track = player.current else { return }
@@ -93,56 +104,128 @@ struct NowPlayingView: View {
         }
     }
 
-    private var bottomBar: some View {
-        GlassEffectContainer(spacing: 16) {
-            HStack(spacing: 16) {
-                Button {
-                    withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
-                } label: {
-                    Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                        .frame(width: 52, height: 44)
-                }
-                .glassEffect(showLyrics ? .regular.tint(.white.opacity(0.25)).interactive() : .regular.interactive(),
-                             in: .capsule)
-
-                Button {
-                    showQueue = true
-                } label: {
-                    Image(systemName: "list.bullet").frame(width: 52, height: 44)
-                }
-                .glassEffect(.regular.interactive(), in: .capsule)
-
-                Menu {
-                    sleepMenu
-                } label: {
-                    Image(systemName: player.sleepTimer == nil ? "moon.zzz" : "moon.zzz.fill")
-                        .frame(width: 52, height: 44)
-                }
-                .glassEffect(player.sleepTimer == nil ? .regular.interactive()
-                             : .regular.tint(.white.opacity(0.25)).interactive(), in: .capsule)
-
-                if let track = player.current {
-                    Menu {
-                        TrackMenu(track: track)
-                    } label: {
-                        Image(systemName: "ellipsis").frame(width: 52, height: 44)
-                    }
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
-            }
-            .font(.title3)
-            .buttonStyle(.plain)
+    private var backdrop: some View {
+        ZStack {
+            Brand.ink
+            AsciiCover(uri: player.current?.cover)
+                .foregroundStyle(.white.opacity(showLyrics ? 0.08 : 0.2))
+                .animation(.easeInOut(duration: 0.4), value: showLyrics)
+            LinearGradient(colors: [.clear, Brand.ink.opacity(0.9)], startPoint: .center, endPoint: .bottom)
         }
-        .padding(.bottom, 12)
+        .ignoresSafeArea()
     }
 
-    private var backdrop: some View {
-        CoverImage(uri: player.current?.cover, size: 200, corner: 0)
-            .scaleEffect(2.4)
-            .blur(radius: 70)
-            .overlay(.black.opacity(0.35))
-            .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.6), value: player.current?.id)
+    private var titleRow: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    if let album = player.current?.albums?.first { router.destination = .album(album) }
+                } label: {
+                    ScrambleText(text: player.current?.fullTitle ?? "—")
+                        .font(Brand.display(26))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+                .accessibilityHint("Открыть релиз")
+                Button {
+                    guard let artists = player.current?.artists, !artists.isEmpty else { return }
+                    if artists.count == 1 {
+                        router.destination = .artist(id: artists[0].id.value, name: artists[0].name)
+                    } else {
+                        pickArtist = true
+                    }
+                } label: {
+                    Text((player.current?.artistLine ?? "").lowercased())
+                        .font(Brand.mono(14))
+                        .opacity(0.6)
+                        .lineLimit(1)
+                }
+                .accessibilityHint("Открыть исполнителя")
+            }
+            .buttonStyle(.plain)
+            .confirmationDialog("Исполнитель", isPresented: $pickArtist, titleVisibility: .visible) {
+                ForEach(player.current?.artists ?? []) { artist in
+                    Button(artist.name) { router.destination = .artist(id: artist.id.value, name: artist.name) }
+                }
+            }
+            Spacer()
+            if let track = player.current {
+                let liked = session.isLiked(track)
+                Button {
+                    Task { await session.toggleLike(track) }
+                } label: {
+                    Image(systemName: liked ? "heart.fill" : "heart")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(liked ? Brand.acid : .white.opacity(0.8))
+                        .symbolEffect(.bounce, value: liked)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(liked ? "Убрать из любимых" : "Нравится")
+            }
+        }
+    }
+
+    private var controls: some View {
+        HStack {
+            Button { player.previous() } label: {
+                Image(systemName: "backward.fill").frame(width: 64, height: 64)
+            }
+            .accessibilityLabel("Назад")
+            Spacer()
+            Button { player.togglePlay() } label: {
+                Group {
+                    if player.isLoading {
+                        ProgressView().tint(Brand.ink)
+                    } else {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .font(.system(size: 32, weight: .heavy))
+                .foregroundStyle(Brand.ink)
+                .frame(width: 88, height: 88)
+                .background(Brand.acid, in: .circle)
+                .shadow(color: Brand.acid.opacity(0.35), radius: 24)
+            }
+            .accessibilityLabel(player.isPlaying ? "Пауза" : "Играть")
+            Spacer()
+            Button { player.next() } label: {
+                Image(systemName: "forward.fill").frame(width: 64, height: 64)
+            }
+            .accessibilityLabel("Дальше")
+        }
+        .font(.system(size: 30, weight: .bold))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+    }
+
+    private var actions: some View {
+        HStack {
+            ActionItem(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: "текст", active: showLyrics) {
+                withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
+            }
+            Spacer()
+            ActionItem(symbol: "list.bullet", label: "очередь", active: false) { showQueue = true }
+            Spacer()
+            Menu {
+                sleepMenu
+            } label: {
+                ActionLabel(symbol: player.sleepTimer == nil ? "moon.zzz" : "moon.zzz.fill", label: "сон",
+                            active: player.sleepTimer != nil)
+            }
+            Spacer()
+            if let track = player.current {
+                Menu {
+                    TrackMenu(track: track)
+                } label: {
+                    ActionLabel(symbol: "ellipsis", label: "ещё", active: false)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 12)
     }
 
     @ViewBuilder
@@ -163,86 +246,84 @@ struct NowPlayingView: View {
             Button("В конце трека", systemImage: "music.note") { player.setSleepTimer(.endOfTrack) }
         }
     }
+}
 
-    private var titleRow: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(player.current?.fullTitle ?? "—").font(.title2.bold()).lineLimit(1)
-                Text(player.current?.artistLine ?? "").font(.title3).opacity(0.7).lineLimit(1)
-            }
-            Spacer()
-            if let track = player.current {
-                let liked = session.isLiked(track)
-                Button {
-                    Task { await session.toggleLike(track) }
-                } label: {
-                    Image(systemName: liked ? "heart.fill" : "heart")
-                        .font(.title2)
-                        .foregroundStyle(liked ? .pink : .white)
-                        .symbolEffect(.bounce, value: liked)
-                        .frame(width: 48, height: 48)
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-            }
+private struct ActionLabel: View {
+    let symbol: String
+    let label: String
+    let active: Bool
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 20, weight: .medium))
+            Text(label).font(Brand.mono(10, weight: .medium))
         }
+        .foregroundStyle(active ? Brand.acid : .white.opacity(0.65))
+        .frame(minWidth: 56, minHeight: 48)
+        .contentShape(.rect)
     }
+}
 
-    private var progress: some View {
-        let total = max(player.duration, 1)
-        return VStack(spacing: 4) {
-            Slider(
-                value: Binding(
-                    get: { scrubbing ?? player.elapsed },
-                    set: { scrubbing = $0 }
-                ),
-                in: 0...total
-            ) { editing in
-                if !editing, let target = scrubbing {
-                    player.seek(to: target)
-                    scrubbing = nil
-                }
-            }
-            .tint(.white)
-            HStack {
-                Text(format(scrubbing ?? player.elapsed))
-                Spacer()
-                Text("-" + format(total - (scrubbing ?? player.elapsed)))
-            }
-            .font(.caption.monospacedDigit())
-            .opacity(0.6)
-        }
+private struct ActionItem: View {
+    let symbol: String
+    let label: String
+    let active: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { ActionLabel(symbol: symbol, label: label, active: active) }
     }
+}
 
-    private var controls: some View {
-        GlassEffectContainer(spacing: 20) {
-            HStack(spacing: 20) {
-                Button { player.previous() } label: {
-                    Image(systemName: "backward.fill").frame(width: 64, height: 64)
+/// Thin acid progress line with a narrow marker; drag anywhere to scrub.
+struct TerminalScrubber: View {
+    let elapsed: Double
+    let duration: Double
+    let onSeek: (Double) -> Void
+    @State private var dragging: Double?
+
+    var body: some View {
+        let total = max(duration, 1)
+        let shown = dragging ?? elapsed
+        VStack(spacing: 8) {
+            GeometryReader { geo in
+                let x = geo.size.width * CGFloat(min(max(shown / total, 0), 1))
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(.white.opacity(0.15)).frame(height: 2)
+                    Rectangle().fill(Brand.acid).frame(width: x, height: 2)
+                    Rectangle().fill(Brand.acid)
+                        .frame(width: 3, height: dragging == nil ? 14 : 22)
+                        .offset(x: max(0, x - 1.5))
+                        .animation(.spring(duration: 0.2), value: dragging == nil)
                 }
-                .glassEffect(.regular.interactive(), in: .circle)
-
-                Button { player.togglePlay() } label: {
-                    Group {
-                        if player.isLoading {
-                            ProgressView().tint(.white)
-                        } else {
-                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .contentTransition(.symbolEffect(.replace))
+                .frame(maxHeight: .infinity)
+                .contentShape(.rect)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragging = Double(min(max(value.location.x / geo.size.width, 0), 1)) * total
                         }
-                    }
-                    .font(.largeTitle)
-                    .frame(width: 88, height: 88)
-                }
-                .glassEffect(.regular.tint(.orange.opacity(0.35)).interactive(), in: .circle)
-
-                Button { player.next() } label: {
-                    Image(systemName: "forward.fill").frame(width: 64, height: 64)
-                }
-                .glassEffect(.regular.interactive(), in: .circle)
+                        .onEnded { _ in
+                            if let target = dragging { onSeek(target) }
+                            dragging = nil
+                        }
+                )
             }
-            .font(.title)
-            .buttonStyle(.plain)
+            .frame(height: 28)
+            .accessibilityElement()
+            .accessibilityLabel("Позиция")
+            .accessibilityValue(format(shown))
+            .accessibilityAdjustableAction { direction in
+                onSeek(direction == .increment ? min(elapsed + 10, total) : max(elapsed - 10, 0))
+            }
+
+            HStack {
+                Text(format(shown))
+                Spacer()
+                Text("-" + format(total - shown))
+            }
+            .font(Brand.mono(11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.55))
         }
     }
 
@@ -258,15 +339,23 @@ struct QueueView: View {
         NavigationStack {
             List {
                 if let current = player.current {
-                    Section("Сейчас") { TrackRow(track: current) }
-                }
-                Section("Далее") {
-                    ForEach(Array(player.upNext), id: \.id) { track in
-                        Button { player.jump(to: track) } label: { TrackRow(track: track) }
-                            .buttonStyle(.plain)
+                    Section {
+                        TrackRow(track: current).terminalRow()
+                    } header: {
+                        TerminalLabel(text: "сейчас")
                     }
                 }
+                Section {
+                    ForEach(Array(player.upNext.enumerated()), id: \.element.id) { offset, track in
+                        Button { player.jump(to: track) } label: { TrackRow(track: track, number: offset + 1) }
+                            .buttonStyle(.plain)
+                            .terminalRow()
+                    }
+                } header: {
+                    TerminalLabel(text: "далее · \(player.upNext.count)")
+                }
             }
+            .terminalPage()
             .navigationTitle("Очередь")
             .navigationBarTitleDisplayMode(.inline)
         }

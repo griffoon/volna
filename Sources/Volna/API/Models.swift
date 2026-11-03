@@ -302,3 +302,98 @@ struct FileInfo: Decodable, Sendable {
 
     let downloadInfo: Download
 }
+
+// MARK: - Home feed
+
+/// `/feed`: generated playlists (Плейлист дня, Дежавю, Премьера, Тайник) and listening-based events.
+struct Feed: Decodable, Sendable {
+    struct Generated: Decodable, Sendable, Identifiable {
+        let type: String
+        let ready: Bool?
+        let data: Playlist?
+
+        var id: String { type }
+    }
+
+    struct Day: Decodable, Sendable {
+        let day: String?
+        let events: [Event]
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            day = try? c.decode(String.self, forKey: .day)
+            events = (try? c.decode([Lenient<Event>].self, forKey: .events))?.compactMap(\.value) ?? []
+        }
+
+        private enum CodingKeys: String, CodingKey { case day, events }
+    }
+
+    struct Event: Decodable, Sendable, Identifiable {
+        struct AlbumItem: Decodable, Sendable { let album: Album? }
+        struct ArtistItem: Decodable, Sendable { let artist: Artist?; let tracks: [Track]? }
+
+        let id: String
+        let type: String
+        let title: String?
+        let tracks: [Track]
+        let albums: [Album]
+        let artists: [ArtistItem]
+
+        private enum CodingKeys: String, CodingKey { case id, type, title, tracks, albums, artists }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = (try? c.decode(FlexibleID.self, forKey: .id).value) ?? UUID().uuidString
+            type = (try? c.decode(String.self, forKey: .type)) ?? ""
+            // Title is either a plain string or a list of `{type, text}` runs.
+            if let plain = try? c.decode(String.self, forKey: .title) {
+                title = plain
+            } else if let runs = try? c.decode([TitleRun].self, forKey: .title) {
+                title = runs.compactMap(\.text).joined()
+            } else {
+                title = nil
+            }
+            tracks = (try? c.decode([Lenient<Track>].self, forKey: .tracks))?.compactMap(\.value) ?? []
+            albums = ((try? c.decode([Lenient<AlbumItem>].self, forKey: .albums))?.compactMap { $0.value?.album }) ?? []
+            artists = (try? c.decode([Lenient<ArtistItem>].self, forKey: .artists))?.compactMap(\.value) ?? []
+        }
+
+        private struct TitleRun: Decodable { let text: String? }
+    }
+
+    let generatedPlaylists: [Generated]
+    let days: [Day]
+
+    private enum CodingKeys: String, CodingKey { case generatedPlaylists, days }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedPlaylists = (try? c.decode([Lenient<Generated>].self, forKey: .generatedPlaylists))?.compactMap(\.value) ?? []
+        days = (try? c.decode([Lenient<Day>].self, forKey: .days))?.compactMap(\.value) ?? []
+    }
+}
+
+struct NewReleases: Decodable, Sendable {
+    let newReleases: [FlexibleID]?
+}
+
+struct ChartInfo: Decodable, Sendable {
+    struct Entry: Decodable, Sendable {
+        struct Position: Decodable, Sendable {
+            let position: Int?
+            let shift: Int?
+        }
+
+        let track: Track?
+        let chart: Position?
+    }
+
+    struct ChartPlaylist: Decodable, Sendable {
+        let tracks: [Lenient<Entry>]?
+    }
+
+    let title: String?
+    let chart: ChartPlaylist?
+
+    var entries: [Entry] { chart?.tracks?.compactMap(\.value).filter { $0.track != nil } ?? [] }
+}

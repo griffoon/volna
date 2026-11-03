@@ -39,6 +39,9 @@ struct RootView: View {
         .onChange(of: router.destination?.id) { _, id in
             if id != nil { showPlayer = false }
         }
+        .task(id: player.current?.cover) {
+            await Theme.shared.update(coverURI: player.current?.cover)
+        }
         .alert("Ошибка", isPresented: Binding(
             get: { player.errorMessage != nil },
             set: { if !$0 { player.errorMessage = nil } }

@@ -3,7 +3,7 @@ import SwiftUI
 struct CoverImage: View {
     let uri: String?
     var size: Int = 200
-    var corner: CGFloat = 8
+    var corner: CGFloat = 3
 
     var body: some View {
         AsyncImage(url: CoverURL.make(uri, size: size)) { phase in
@@ -11,55 +11,67 @@ struct CoverImage: View {
                 image.resizable().scaledToFill()
             } else {
                 ZStack {
-                    Rectangle().fill(.quaternary)
-                    Image(systemName: "music.note").foregroundStyle(.secondary)
+                    Rectangle().fill(Color.white.opacity(0.06))
+                    Text("01").font(Brand.mono(11, weight: .bold)).foregroundStyle(.white.opacity(0.3))
                 }
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: corner, style: .continuous))
+        .clipShape(.rect(cornerRadius: corner))
     }
 }
 
 struct TrackRow: View {
     @Environment(PlayerEngine.self) private var player
     let track: Track
+    /// Position in an album or playlist; nil shows the cover instead.
+    var number: Int?
 
     private var isCurrent: Bool { player.current?.id == track.id }
 
     var body: some View {
         HStack(spacing: 12) {
-            CoverImage(uri: track.cover, size: 100, corner: 6)
-                .frame(width: 48, height: 48)
-                .overlay {
+            if let number {
+                Group {
                     if isCurrent {
-                        Image(systemName: "waveform")
-                            .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
-                            .foregroundStyle(.white)
+                        SpectrumText(isPlaying: player.isPlaying, bars: 2)
+                    } else {
+                        Text(String(format: "%02d", number))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+                .font(Brand.mono(13, weight: .bold))
+                .frame(width: 28, alignment: .leading)
+            }
+            CoverImage(uri: track.cover, size: 100)
+                .frame(width: 46, height: 46)
+                .overlay {
+                    if isCurrent && number == nil {
+                        SpectrumText(isPlaying: player.isPlaying, bars: 3)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(.black.opacity(0.4), in: .rect(cornerRadius: 6))
+                            .background(.black.opacity(0.6))
                     }
                 }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(track.fullTitle)
-                    .font(.body)
-                    .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isCurrent ? Brand.acid : .white)
                     .lineLimit(1)
-                Text(track.artistLine)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Text(track.artistLine.lowercased())
+                    .font(Brand.mono(12))
+                    .foregroundStyle(.white.opacity(0.55))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
             if let ms = track.durationMs {
                 Text(Duration.milliseconds(ms).formatted(.time(pattern: .minuteSecond)))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(Brand.mono(11))
+                    .foregroundStyle(.white.opacity(0.35))
             }
         }
         .contentShape(.rect)
-        .opacity(track.available == false ? 0.4 : 1)
+        .opacity(track.available == false ? 0.35 : 1)
     }
 }
 
@@ -68,15 +80,17 @@ struct TrackList: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Session.self) private var session
     let tracks: [Track]
+    var numbered = false
 
     var body: some View {
         ForEach(Array(tracks.enumerated()), id: \.element.id) { offset, track in
             Button {
                 player.play(tracks, startAt: offset)
             } label: {
-                TrackRow(track: track)
+                TrackRow(track: track, number: numbered ? offset + 1 : nil)
             }
             .buttonStyle(.plain)
+            .terminalRow()
             .contextMenu { TrackMenu(track: track) }
             .swipeActions(edge: .trailing) {
                 Button {
@@ -84,7 +98,7 @@ struct TrackList: View {
                 } label: {
                     Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward")
                 }
-                .tint(.orange)
+                .tint(Brand.acid)
             }
             .swipeActions(edge: .leading) {
                 Button {
@@ -95,6 +109,84 @@ struct TrackList: View {
                 .tint(.pink)
             }
         }
+    }
+}
+
+// MARK: - Terminal styling
+
+extension View {
+    /// Black list row with a hairline separator, the base of every list screen.
+    func terminalRow() -> some View {
+        listRowBackground(Brand.ink)
+            .listRowSeparatorTint(.white.opacity(0.08))
+    }
+
+    /// Black page behind a List or ScrollView.
+    func terminalPage() -> some View {
+        scrollContentBackground(.hidden)
+            .background(Brand.ink)
+            .listStyle(.plain)
+    }
+}
+
+/// Big Dela Gothic title with a mono caption line, used at the top of list screens.
+struct TerminalHeader: View {
+    let title: String
+    var caption: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let caption {
+                Text("> " + caption)
+                    .font(Brand.mono(11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            Text(title)
+                .font(Brand.display(34))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+    }
+}
+
+/// Section label like `// плейлисты · 12`.
+struct TerminalLabel: View {
+    let text: String
+
+    var body: some View {
+        Text("// " + text)
+            .font(Brand.mono(12, weight: .bold))
+            .foregroundStyle(Brand.acid)
+            .textCase(nil)
+    }
+}
+
+/// Primary acid action and secondary outlined action, used under collection headers.
+struct TerminalActions: View {
+    let play: () -> Void
+    let shuffle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: play) {
+                Label("СЛУШАТЬ", systemImage: "play.fill")
+                    .font(Brand.mono(13, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .foregroundStyle(Brand.ink)
+                    .background(Brand.acid, in: .capsule)
+            }
+            Button(action: shuffle) {
+                Label("ВПЕРЕМЕШКУ", systemImage: "shuffle")
+                    .font(Brand.mono(13, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .foregroundStyle(.white)
+                    .overlay(Capsule().stroke(.white.opacity(0.35), lineWidth: 1))
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

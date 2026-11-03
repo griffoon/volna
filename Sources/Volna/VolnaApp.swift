@@ -6,6 +6,10 @@ struct VolnaApp: App {
     @State private var player = PlayerEngine()
     @State private var router = Router()
 
+    init() {
+        Brand.registerFonts()
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -18,10 +22,14 @@ struct VolnaApp: App {
             .environment(session)
             .environment(player)
             .environment(router)
-            .tint(.orange)
+            .tint(Brand.acid)
+            .preferredColorScheme(.dark)
             .task(id: session.isLoggedIn) {
                 player.attach(session.client)
+                session.onLike = { [player] track, liked in player.noteLike(track, liked: liked) }
+                session.onDislike = { [player] track in player.noteDislike(track) }
                 await session.refreshAccount()
+                player.uid = session.uid
             }
             .onOpenURL(perform: handle)
         }

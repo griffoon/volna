@@ -79,6 +79,9 @@ struct TrackMenu: View {
             Button("Добавить в плейлист", systemImage: "text.badge.plus") {
                 router.destination = .addToPlaylist(track)
             }
+            Button("Не рекомендовать", systemImage: "hand.thumbsdown", role: .destructive) {
+                Task { await session.dislike(track) }
+            }
         }
         Section {
             ForEach(track.artists) { artist in

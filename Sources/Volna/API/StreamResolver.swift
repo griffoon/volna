@@ -2,18 +2,31 @@ import CommonCrypto
 import CryptoKit
 import Foundation
 
+struct StreamSource: Sendable, Equatable {
+    let url: URL
+    let codec: String
+    let kbps: Int?
+
+    /// HUD line like `FLAC · 1411 kbps`.
+    var label: String {
+        let name = codec.replacingOccurrences(of: "-mp4", with: "").uppercased()
+        guard let kbps, kbps > 0 else { return name }
+        return "\(name) · \(kbps) kbps"
+    }
+}
+
 /// Turns a track id into something AVPlayer can play. Nothing is kept beyond the temp cache.
 struct StreamResolver: Sendable {
     private static let salt = "XGRlBW9FXlekgbPrRHuSiA"
 
     let client: YMClient
 
-    func streamURL(for trackID: String, quality: Preferences.Quality) async throws -> URL {
+    func stream(for trackID: String, quality: Preferences.Quality) async throws -> StreamSource {
         switch quality {
         case .lossless:
-            if let url = try? await fileInfoURL(trackID: trackID, quality: "lossless") { return url }
+            if let source = try? await fileInfoSource(trackID: trackID, quality: "lossless") { return source }
         case .efficient:
-            if let url = try? await fileInfoURL(trackID: trackID, quality: "nq") { return url }
+            if let source = try? await fileInfoSource(trackID: trackID, quality: "nq") { return source }
         case .high:
             break
         }
@@ -22,11 +35,13 @@ struct StreamResolver: Sendable {
 
     // MARK: get-file-info (lossless / aac)
 
-    private func fileInfoURL(trackID: String, quality: String) async throws -> URL {
+    private func fileInfoSource(trackID: String, quality: String) async throws -> StreamSource {
         let info = try await client.fileInfo(trackID: trackID, quality: quality, transport: "raw")
-        guard let url = URL(string: info.url) else { throw YMError.noStream }
-        guard let key = info.key, !key.isEmpty else { return url }
-        return try await decryptToTemp(url: url, hexKey: key, codec: info.codec, trackID: trackID)
+        guard var url = URL(string: info.url) else { throw YMError.noStream }
+        if let key = info.key, !key.isEmpty {
+            url = try await decryptToTemp(url: url, hexKey: key, codec: info.codec, trackID: trackID)
+        }
+        return StreamSource(url: url, codec: info.codec, kbps: info.bitrate)
     }
 
     /// `encraw` files are AES-128-CTR with a zero counter; decrypt once into the caches dir.
@@ -45,7 +60,7 @@ struct StreamResolver: Sendable {
 
     // MARK: Legacy download-info (mp3)
 
-    private func legacyMP3(for trackID: String) async throws -> URL {
+    private func legacyMP3(for trackID: String) async throws -> StreamSource {
         let variants = try await client.downloadInfo(trackID: trackID)
         guard let best = variants
             .filter({ $0.codec == "mp3" })
@@ -63,7 +78,7 @@ struct StreamResolver: Sendable {
         guard let url = URL(string: "https://\(info.host)/get-mp3/\(sign)/\(info.ts)/\(path)") else {
             throw YMError.noStream
         }
-        return url
+        return StreamSource(url: url, codec: "mp3", kbps: best.bitrateInKbps)
     }
 
     /// Drops temp files left from previous lossless playback.

@@ -13,7 +13,7 @@ struct SearchView: View {
         NavigationStack {
             List {
                 if let albums = result?.albums?.results, !albums.isEmpty {
-                    Section("Альбомы") {
+                    Section(header: TerminalLabel(text: "альбомы")) {
                         ScrollView(.horizontal) {
                             LazyHStack(spacing: 14) {
                                 ForEach(albums.prefix(12)) { album in
@@ -37,24 +37,26 @@ struct SearchView: View {
                         .scrollTargetBehavior(.viewAligned)
                         .scrollIndicators(.hidden)
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .terminalRow()
                     }
                 }
 
                 if let tracks = result?.tracks?.results, !tracks.isEmpty {
-                    Section("Треки") {
+                    Section(header: TerminalLabel(text: "треки")) {
                         TrackList(tracks: tracks)
                     }
                 }
 
                 if let playlists = result?.playlists?.results, !playlists.isEmpty {
-                    Section("Плейлисты") {
+                    Section(header: TerminalLabel(text: "плейлисты")) {
                         ForEach(playlists.prefix(8)) { playlist in
                             NavigationLink(playlist.title) { PlaylistView(playlist: playlist) }
+                                .terminalRow()
                         }
                     }
                 }
             }
-            .listStyle(.plain)
+            .terminalPage()
             .overlay {
                 if query.isEmpty {
                     ContentUnavailableView("Поиск", systemImage: "magnifyingglass",

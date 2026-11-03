@@ -87,6 +87,26 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Home
+
+    func feed() async throws -> Feed {
+        try await get("feed")
+    }
+
+    func newReleaseIDs() async throws -> [String] {
+        let list: NewReleases = try await get("landing3/new-releases")
+        return list.newReleases?.map(\.value) ?? []
+    }
+
+    func albums(ids: [String]) async throws -> [Album] {
+        guard !ids.isEmpty else { return [] }
+        return try await post("albums", form: ["album-ids": ids.joined(separator: ",")])
+    }
+
+    func chart() async throws -> ChartInfo {
+        try await get("landing3/chart")
+    }
+
     // MARK: Artist
 
     func artistBrief(id: String) async throws -> ArtistBriefInfo {
@@ -130,29 +150,87 @@ struct YMClient: Sendable {
         case trackStarted(trackID: String)
         case trackFinished(trackID: String, played: Double)
         case skip(trackID: String, played: Double)
+        case like(trackID: String)
+        case dislike(trackID: String)
+
+        var name: String {
+            switch self {
+            case .radioStarted: "radioStarted"
+            case .trackStarted: "trackStarted"
+            case .trackFinished: "trackFinished"
+            case .skip: "skip"
+            case .like: "like"
+            case .dislike: "dislike"
+            }
+        }
+    }
+
+    /// `from` value of the mobile app's My Wave, as MarshalX documents it.
+    static let waveFrom = "radio-mobile-user-onyourwave"
+
+    /// ISO 8601 with milliseconds and `Z`, the format the rotor and play-audio endpoints expect.
+    static func isoNow() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
     }
 
     func sendWaveFeedback(sessionID: String, batchID: String?, event: WaveEvent) async throws {
-        var payload: [String: Any] = ["timestamp": ISO8601DateFormatter().string(from: Date())]
+        var payload: [String: Any] = ["type": event.name, "timestamp": Self.isoNow()]
         switch event {
         case .radioStarted:
-            payload["type"] = "radioStarted"
-        case .trackStarted(let id):
-            payload["type"] = "trackStarted"
+            break
+        case .trackStarted(let id), .like(let id), .dislike(let id):
             payload["trackId"] = id
-        case .trackFinished(let id, let played):
-            payload["type"] = "trackFinished"
+        case .trackFinished(let id, let played), .skip(let id, let played):
             payload["trackId"] = id
-            payload["totalPlayedSeconds"] = played
-        case .skip(let id, let played):
-            payload["type"] = "skip"
-            payload["trackId"] = id
-            payload["totalPlayedSeconds"] = played
+            payload["totalPlayedSeconds"] = (played * 10).rounded() / 10
         }
         var body: [String: Any] = ["event": payload]
         if let batchID { body["batchId"] = batchID }
-        if case .radioStarted = event { body["from"] = "mobile-radio-user-onyourwave" }
+        if case .radioStarted = event { body["from"] = Self.waveFrom }
         let _: AnyDecodable = try await postJSON("rotor/session/\(sessionID)/feedback", body: body)
+    }
+
+    // MARK: Listening history
+
+    /// Reports a listen. This is what puts tracks into history and teaches recommendations.
+    func playAudio(track: Track, uid: String, from: String, playID: String,
+                   played: Double, position: Double) async throws {
+        let length = Double(track.durationMs ?? 0) / 1000
+        var form: [String: String] = [
+            "track-id": track.id.value,
+            "from-cache": "False",
+            "from": from,
+            "play-id": playID,
+            "uid": uid,
+            "timestamp": Self.isoNow(),
+            "track-length-seconds": String(Int(length.rounded())),
+            "total-played-seconds": String(format: "%.1f", played),
+            "end-position-seconds": String(format: "%.1f", position),
+            "client-now": Self.isoNow(),
+        ]
+        if let album = track.albumID { form["album-id"] = album.value }
+        let _: AnyDecodable = try await post("play-audio", form: form)
+    }
+
+    func likedAlbumIDs(uid: String) async throws -> [String] {
+        struct Like: Decodable { let album: Album?; let id: FlexibleID? }
+        let likes: [Lenient<Like>] = try await get("users/\(uid)/likes/albums")
+        return likes.compactMap { $0.value?.album?.id.value ?? $0.value?.id?.value }
+    }
+
+    func setAlbumLike(_ liked: Bool, albumID: String, uid: String) async throws {
+        let action = liked ? "add-multiple" : "remove"
+        let _: AnyDecodable = try await post("users/\(uid)/likes/albums/\(action)", form: ["album-ids": albumID])
+    }
+
+    func setDislike(_ disliked: Bool, trackRef: String, uid: String) async throws {
+        let action = disliked ? "add-multiple" : "remove"
+        let _: AnyDecodable = try await post(
+            "users/\(uid)/dislikes/tracks/\(action)",
+            form: ["track-ids": trackRef]
+        )
     }
 
     // MARK: Lossless

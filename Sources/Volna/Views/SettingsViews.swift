@@ -5,6 +5,9 @@ struct SettingsView: View {
     @Environment(Router.self) private var router
     @AppStorage(Preferences.Key.quality) private var quality = Preferences.Quality.high
     @AppStorage(Preferences.Key.crossfade) private var crossfade = 0.0
+    @AppStorage(Theme.coverAccentKey) private var coverAccent = true
+    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.breath.rawValue
+    @Environment(PlayerEngine.self) private var player
 
     var body: some View {
         Form {
@@ -31,6 +34,33 @@ struct SettingsView: View {
                 }
             } footer: {
                 Text("Следующий трек подгружается заранее, поэтому даже без кроссфейда переход идёт без паузы.")
+            }
+
+            Section {
+                Picker("Визуализатор", selection: $effectRaw) {
+                    ForEach(VisualizerEffect.allCases) { effect in
+                        VStack(alignment: .leading) {
+                            Text(effect.title)
+                            Text(effect.summary).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .tag(effect.rawValue)
+                    }
+                }
+                .pickerStyle(.inline)
+            } header: {
+                Text("Визуализатор «Волны»")
+            }
+
+            Section {
+                Toggle("Акцент из обложки", isOn: $coverAccent)
+                    .tint(Brand.acid)
+                    .onChange(of: coverAccent) {
+                        Task { await Theme.shared.update(coverURI: player.current?.cover) }
+                    }
+            } header: {
+                Text("Вид")
+            } footer: {
+                Text("Цвет кнопок и подсветки берётся из обложки текущего трека. На серых обложках остаётся кислотный.")
             }
 
             Section {

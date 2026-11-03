@@ -18,7 +18,7 @@ struct ArtistView: View {
             .listRowInsets(EdgeInsets())
 
             if let tracks = info?.popularTracks, !tracks.isEmpty {
-                Section("Популярное") {
+                Section(header: TerminalLabel(text: "популярное")) {
                     TrackList(tracks: Array(tracks.prefix(10)))
                 }
             }
@@ -27,7 +27,7 @@ struct ArtistView: View {
             albumShelf("Сборники и участие", info?.alsoAlbums)
 
             if let similar = info?.similarArtists, !similar.isEmpty {
-                Section("Похожие") {
+                Section(header: TerminalLabel(text: "похожие")) {
                     ScrollView(.horizontal) {
                         LazyHStack(spacing: 16) {
                             ForEach(similar.prefix(15)) { artist in
@@ -49,7 +49,7 @@ struct ArtistView: View {
                 }
             }
         }
-        .listStyle(.plain)
+        .terminalPage()
         .overlay {
             if info == nil, error == nil { ProgressView() }
             if let error { ErrorBanner(message: error) { Task { await load() } } }
@@ -68,7 +68,7 @@ struct ArtistView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(info?.artist.name ?? name)
-                    .font(.system(size: 38, weight: .heavy))
+                    .font(Brand.display(36))
                     .foregroundStyle(.white)
                 GlassEffectContainer(spacing: 12) {
                     HStack(spacing: 12) {
@@ -94,7 +94,7 @@ struct ArtistView: View {
     @ViewBuilder
     private func albumShelf(_ title: String, _ albums: [Album]?) -> some View {
         if let albums, !albums.isEmpty {
-            Section(title) {
+            Section(header: TerminalLabel(text: title.lowercased())) {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 14) {
                         ForEach(albums) { album in
