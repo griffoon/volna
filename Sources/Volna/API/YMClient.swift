@@ -215,6 +215,33 @@ struct YMClient: Sendable {
         return result.credits?.compactMap(\.value) ?? []
     }
 
+    // MARK: Music videos
+
+    struct Video: Decodable, Sendable, Hashable {
+        let provider: String?
+        let providerVideoId: String?
+        let title: String?
+        let url: String?
+
+        /// A link that opens the video: the given url, or one built from the provider's id.
+        var link: URL? {
+            if let url, let parsed = URL(string: url), parsed.scheme?.hasPrefix("http") == true { return parsed }
+            guard let id = providerVideoId, !id.isEmpty else { return nil }
+            switch provider?.lowercased() {
+            case "youtube": return URL(string: "https://youtu.be/\(id)")
+            case "vimeo": return URL(string: "https://vimeo.com/\(id)")
+            default: return nil
+            }
+        }
+    }
+
+    /// Music videos Yandex links to the track (mostly YouTube).
+    func videos(trackID: String) async throws -> [Video] {
+        struct Supplement: Decodable { let videos: [Lenient<Video>]? }
+        let result: Supplement = try await get("tracks/\(trackID)/supplement")
+        return result.videos?.compactMap(\.value).filter { $0.link != nil } ?? []
+    }
+
     // MARK: Similar
 
     func similarTracks(trackID: String) async throws -> [Track] {

@@ -398,8 +398,29 @@ struct TrackActionsPanel: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Session.self) private var session
     @Environment(Router.self) private var router
+    @Environment(\.openURL) private var openURL
     let track: Track
     @State private var showCard = false
+    @State private var videos: [YMClient.Video] = []
+
+    /// The clip Yandex links to; if it only knows a clip exists, a YouTube search for it.
+    private var clipLink: URL? {
+        if let link = videos.first?.link { return link }
+        guard track.clipIds?.isEmpty == false else { return nil }
+        let query = "\(track.artistLine) \(track.fullTitle)"
+        var components = URLComponents(string: "https://www.youtube.com/results")
+        components?.queryItems = [URLQueryItem(name: "search_query", value: query)]
+        return components?.url
+    }
+
+    private var clipTitle: String {
+        guard let video = videos.first else { return "Найти клип на YouTube" }
+        switch video.provider?.lowercased() {
+        case "youtube": return "Клип на YouTube"
+        case "vimeo": return "Клип на Vimeo"
+        default: return "Смотреть клип"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -426,6 +447,11 @@ struct TrackActionsPanel: View {
                     rowLabel("Поделиться", "square.and.arrow.up")
                 }
                 .buttonStyle(.plain)
+            }
+            if let clip = clipLink {
+                row(clipTitle, "play.rectangle") {
+                    Haptics.tap(); openURL(clip)
+                }
             }
             row("Карточка трека", "photo.on.rectangle.angled") {
                 Haptics.tap(); showCard = true
@@ -455,6 +481,10 @@ struct TrackActionsPanel: View {
         .sheet(isPresented: $showCard) {
             ShareCardSheet(track: track)
                 .presentationDetents([.large])
+        }
+        .task(id: track.id) {
+            videos = []
+            videos = (try? await session.client?.videos(trackID: track.id.value)) ?? []
         }
     }
 

@@ -68,6 +68,8 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     let lyricsInfo: LyricsInfo?
     /// EBU R128 loudness: integrated LUFS and true peak, for volume normalisation.
     let r128: Loudness?
+    /// Yandex's own music video ids; non-empty means the track has a clip.
+    let clipIds: [Int]?
 
     var artistLine: String { artists.map(\.name).joined(separator: ", ") }
 
@@ -87,7 +89,7 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     var cover: String? { coverUri ?? albums?.first?.coverUri }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, version, artists, albums, coverUri, durationMs, available, lyricsInfo, r128
+        case id, title, version, artists, albums, coverUri, durationMs, available, lyricsInfo, r128, clipIds
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +104,7 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
         available = try? c.decode(Bool.self, forKey: .available)
         lyricsInfo = try? c.decode(LyricsInfo.self, forKey: .lyricsInfo)
         r128 = try? c.decode(Loudness.self, forKey: .r128)
+        clipIds = try? c.decode([Int].self, forKey: .clipIds)
     }
 }
 
