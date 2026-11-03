@@ -29,6 +29,8 @@ struct WaveView: View {
     }
 
     private var waveIsOn: Bool { player.isWave && player.current != nil }
+    /// Any track loaded, from the wave or anywhere else: the screen shows it the same way.
+    private var hasTrack: Bool { player.current != nil }
 
     private var title: String {
         if case .wave(let title) = player.source, player.current != nil { return title }
@@ -212,17 +214,17 @@ struct WaveView: View {
     /// Previous · play · next, with the acid play button in the middle.
     private var transport: some View {
         HStack(spacing: 34) {
-            if waveIsOn {
+            if hasTrack {
                 Button { Haptics.step(); player.goBack() } label: {
                     Image(systemName: "backward.end.fill").font(.system(size: 24, weight: .bold))
                 }
                 .accessibilityLabel("Предыдущий трек")
                 .disabled(player.previousTrack == nil)
             }
-            PlayPulseButton(isPlaying: waveIsOn && player.isPlaying, isLoading: player.isLoading) {
-                if waveIsOn { Haptics.thump(); player.togglePlay() } else { Haptics.launch(); player.startWave() }
+            PlayPulseButton(isPlaying: hasTrack && player.isPlaying, isLoading: player.isLoading) {
+                if hasTrack { Haptics.thump(); player.togglePlay() } else { Haptics.launch(); player.startWave() }
             }
-            if waveIsOn {
+            if hasTrack {
                 Button { Haptics.step(); player.next() } label: {
                     Image(systemName: "forward.end.fill").font(.system(size: 24, weight: .bold))
                 }
@@ -235,7 +237,7 @@ struct WaveView: View {
 
     /// "Моя волна" until something plays, then the artist — the way Yandex does it.
     private var headline: String {
-        guard waveIsOn, let artist = player.current?.artists.first?.name else { return title }
+        guard hasTrack, let artist = player.current?.artists.first?.name else { return title }
         return artist
     }
 
@@ -251,7 +253,7 @@ struct WaveView: View {
                 .contentTransition(.opacity)
                 .animation(.easeInOut(duration: 0.35), value: headline)
 
-            if let track = player.current, waveIsOn {
+            if let track = player.current, hasTrack {
                 CoverImage(uri: track.cover, size: 300, corner: 8)
                     .frame(width: 96, height: 96)
                     .shadow(color: .black.opacity(0.6), radius: 16)
@@ -279,7 +281,7 @@ struct WaveView: View {
                 .buttonStyle(.plain)
             }
 
-            if !waveIsOn, let last = lastWave, let seeds = last.seeds, !seeds.isEmpty {
+            if !hasTrack, let last = lastWave, let seeds = last.seeds, !seeds.isEmpty {
                 Button {
                     Haptics.launch()
                     player.startWave(seeds: seeds, title: last.name ?? "Моя волна")
