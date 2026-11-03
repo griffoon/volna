@@ -83,6 +83,9 @@ struct ArtistView: View {
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { PinToggle(target: .artist(artistID)) }
+        }
         .task { await load() }
     }
 

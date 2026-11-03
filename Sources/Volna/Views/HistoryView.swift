@@ -302,3 +302,71 @@ struct TrackAboutView: View {
         .padding(.vertical, 2)
     }
 }
+
+/// Pin / unpin toggle for an album, artist or playlist; synced with the official apps.
+struct PinToggle: View {
+    @Environment(Session.self) private var session
+    let target: YMClient.PinTarget
+
+    var body: some View {
+        let pinned = session.isPinned(target)
+        Button {
+            Haptics.success()
+            Task { await session.togglePin(target) }
+        } label: {
+            Label(pinned ? "откреплено" : "закрепить", systemImage: pinned ? "pin.slash" : "pin")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(pinned ? Brand.acid : .white)
+        }
+        .accessibilityLabel(pinned ? "Открепить" : "Закрепить в коллекции")
+        .task { if session.pins.isEmpty { await session.loadPins() } }
+    }
+}
+
+/// Opens a pinned item on its own page.
+struct PinnedLink: View {
+    let pin: Pin
+
+    var body: some View {
+        let data = pin.data
+        switch pin.type {
+        case "album":
+            NavigationLink {
+                AlbumView(album: Album(id: data?.id ?? FlexibleID(""), title: pin.displayTitle,
+                                       coverUri: pin.coverURI, year: nil, artists: nil, trackCount: nil))
+            } label: { card }
+        case "artist":
+            NavigationLink {
+                ArtistView(artistID: data?.id?.value ?? "", name: pin.displayTitle)
+            } label: { card }
+        case "playlist":
+            NavigationLink {
+                PlaylistView(playlist: Playlist(uid: data?.uid ?? FlexibleID(""), kind: data?.kind ?? FlexibleID(""),
+                                                title: pin.displayTitle, trackCount: nil, cover: data?.cover,
+                                                ogImage: nil, tracks: nil, revision: nil, visibility: nil))
+            } label: { card }
+        default:
+            EmptyView()
+        }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            CoverImage(uri: pin.coverURI, size: 300, corner: pin.type == "artist" ? 60 : 3)
+                .frame(width: 104, height: 104)
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Brand.ink)
+                        .padding(5)
+                        .background(Brand.acid, in: .circle)
+                        .padding(5)
+                }
+            Text(pin.displayTitle)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+        .frame(width: 104, alignment: .leading)
+    }
+}

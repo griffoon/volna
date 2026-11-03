@@ -23,6 +23,21 @@ struct LibraryView: View {
                 .terminalRow()
                 .listRowSeparator(.hidden)
 
+                if !session.pins.isEmpty {
+                    Section {
+                        ScrollView(.horizontal) {
+                            LazyHStack(alignment: .top, spacing: 14) {
+                                ForEach(session.pins) { PinnedLink(pin: $0) }
+                            }
+                        }
+                        .scrollIndicators(.hidden)
+                        .buttonStyle(.plain)
+                        .terminalRow()
+                    } header: {
+                        TerminalLabel(text: "закреплённое")
+                    }
+                }
+
                 NavigationLink {
                     HistoryView()
                 } label: {
@@ -104,7 +119,9 @@ struct LibraryView: View {
     private func load() async {
         guard let client = session.client, let uid = session.uid else { return }
         do {
+            async let pins: Void = session.loadPins()
             playlists = try await client.playlists(uid: uid)
+            await pins
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -246,6 +263,9 @@ struct PlaylistView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                PinToggle(target: .playlist(uid: playlist.uid.value, kind: playlist.kind.value))
+            }
             if isOwn {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -424,6 +444,8 @@ struct AlbumView: View {
             } label: {
                 Label("волна по альбому", systemImage: "dot.radiowaves.left.and.right")
             }
+            Spacer(minLength: 0)
+            PinToggle(target: .album(album.id.value))
         }
         .font(Brand.mono(12, weight: .bold))
         .foregroundStyle(.white)

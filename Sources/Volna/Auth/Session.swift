@@ -59,6 +59,27 @@ final class Session {
     }
 
     private(set) var likedAlbums: Set<String> = []
+    private(set) var pins: [Pin] = []
+
+    func loadPins() async {
+        guard let client, let list = try? await client.pins() else { return }
+        pins = list
+    }
+
+    func isPinned(_ target: YMClient.PinTarget) -> Bool {
+        pins.contains { $0.id == target.key }
+    }
+
+    func togglePin(_ target: YMClient.PinTarget) async {
+        guard let client else { return }
+        let pin = !isPinned(target)
+        do {
+            try await client.setPinned(pin, target)
+            await loadPins()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
     /// Full liked tracks in order, kept for the session so "Мне нравится" opens instantly.
     var likedTrackCache: [Track] = []
 

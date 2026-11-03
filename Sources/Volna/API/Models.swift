@@ -545,3 +545,31 @@ struct Concert: Decodable, Sendable, Identifiable {
         return f
     }()
 }
+
+// MARK: - Pins
+
+/// Something pinned to the top of the collection in the official apps.
+struct Pin: Decodable, Sendable, Identifiable {
+    struct Data: Decodable, Sendable {
+        let id: FlexibleID?
+        let uid: FlexibleID?
+        let kind: FlexibleID?
+        let name: String?
+        let title: String?
+        let cover: PlaylistCover?
+    }
+
+    let type: String
+    let data: Data?
+
+    var id: String { Pin.key(type: type, data: data) }
+    var displayTitle: String { data?.title ?? data?.name ?? "" }
+    var coverURI: String? { data?.cover?.uri ?? data?.cover?.itemsUri?.first }
+
+    static func key(type: String, data: Data?) -> String {
+        switch type {
+        case "playlist": "playlist:\(data?.uid?.value ?? ""):\(data?.kind?.value ?? "")"
+        default: "\(type):\(data?.id?.value ?? "")"
+        }
+    }
+}

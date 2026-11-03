@@ -93,6 +93,47 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Pins
+
+    enum PinTarget {
+        case album(String)
+        case artist(String)
+        case playlist(uid: String, kind: String)
+
+        var path: String {
+            switch self {
+            case .album: "pin/album"
+            case .artist: "pin/artist"
+            case .playlist: "pin/playlist"
+            }
+        }
+
+        var body: [String: Any] {
+            switch self {
+            case .album(let id), .artist(let id): ["id": Int(id) ?? id]
+            case .playlist(let uid, let kind): ["uid": Int(uid) ?? uid, "kind": Int(kind) ?? kind]
+            }
+        }
+
+        var key: String {
+            switch self {
+            case .album(let id): "album:\(id)"
+            case .artist(let id): "artist:\(id)"
+            case .playlist(let uid, let kind): "playlist:\(uid):\(kind)"
+            }
+        }
+    }
+
+    func pins() async throws -> [Pin] {
+        struct List: Decodable { let pins: [Lenient<Pin>]? }
+        let list: List = try await get("pins")
+        return list.pins?.compactMap(\.value) ?? []
+    }
+
+    func setPinned(_ pinned: Bool, _ target: PinTarget) async throws {
+        let _: AnyDecodable = try await postJSON(target.path, body: target.body, method: pinned ? "PUT" : "DELETE")
+    }
+
     // MARK: Last wave
 
     struct LastWave: Decodable, Sendable {
@@ -387,9 +428,9 @@ struct YMClient: Sendable {
         return try await send(request)
     }
 
-    private func postJSON<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+    private func postJSON<T: Decodable>(_ path: String, body: [String: Any], method: String = "POST") async throws -> T {
         var request = URLRequest(url: Self.baseURL.appending(path: path))
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await send(request)
