@@ -573,3 +573,58 @@ struct Pin: Decodable, Sendable, Identifiable {
         }
     }
 }
+
+// MARK: - Browse (metatags)
+
+/// `landing3/metatags`: trees of genres, moods, activities and eras.
+struct MetatagTrees: Decodable, Sendable {
+    struct Leaf: Decodable, Sendable, Hashable {
+        let tag: String?
+        let title: String?
+    }
+
+    struct Tree: Decodable, Sendable {
+        let title: String?
+        let leaves: [Leaf]
+
+        private enum CodingKeys: String, CodingKey { case title, leaves }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            title = try? c.decode(String.self, forKey: .title)
+            leaves = (try? c.decode([Lenient<Leaf>].self, forKey: .leaves))?.compactMap(\.value)
+                .filter { $0.tag != nil && $0.title != nil } ?? []
+        }
+    }
+
+    let trees: [Tree]
+
+    private enum CodingKeys: String, CodingKey { case trees }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        trees = (try? c.decode([Lenient<Tree>].self, forKey: .trees))?.compactMap(\.value) ?? []
+    }
+}
+
+/// `metatags/{tag}`: one genre or mood with its playlists, albums and artists.
+struct Metatag: Decodable, Sendable {
+    struct Title: Decodable, Sendable { let title: String?; let fullTitle: String? }
+
+    let title: Title?
+    let stationId: String?
+    let artists: [Artist]
+    let albums: [Album]
+    let playlists: [Playlist]
+
+    private enum CodingKeys: String, CodingKey { case title, stationId, artists, albums, playlists }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try? c.decode(Title.self, forKey: .title)
+        stationId = try? c.decode(String.self, forKey: .stationId)
+        artists = (try? c.decode([Lenient<Artist>].self, forKey: .artists))?.compactMap(\.value) ?? []
+        albums = (try? c.decode([Lenient<Album>].self, forKey: .albums))?.compactMap(\.value) ?? []
+        playlists = (try? c.decode([Lenient<Playlist>].self, forKey: .playlists))?.compactMap(\.value) ?? []
+    }
+}

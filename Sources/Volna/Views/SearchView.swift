@@ -16,16 +16,14 @@ struct SearchView: View {
             List {
                 if query.isEmpty {
                     recentSection
+                    BrowseSection()
                 } else {
                     results
                 }
             }
             .terminalPage()
             .overlay {
-                if query.isEmpty && recent.isEmpty {
-                    ContentUnavailableView("Поиск", systemImage: "magnifyingglass",
-                                           description: Text("Треки, артисты, альбомы, плейлисты"))
-                } else if !query.isEmpty, let error {
+                if !query.isEmpty, let error {
                     ErrorBanner(message: error) { Task { await search(query) } }
                 }
             }

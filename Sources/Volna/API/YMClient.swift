@@ -93,6 +93,16 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Browse
+
+    func metatagTrees() async throws -> MetatagTrees {
+        try await get("landing3/metatags")
+    }
+
+    func metatag(_ tag: String) async throws -> Metatag {
+        try await get("metatags/\(tag)")
+    }
+
     // MARK: Pins
 
     enum PinTarget {
