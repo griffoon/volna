@@ -26,7 +26,13 @@ struct VolnaApp: App {
             .preferredColorScheme(.dark)
             .task(id: session.isLoggedIn) {
                 player.attach(session.client)
-                session.onLike = { [player] track, liked in player.noteLike(track, liked: liked) }
+                session.onLike = { [player] track, liked in
+                    player.noteLike(track, liked: liked)
+                    player.refreshRemoteLike()
+                }
+                player.isLikedProvider = { [session] track in session.isLiked(track) }
+                player.remoteLike = { [session] track in Task { await session.toggleLike(track) } }
+                player.remoteDislike = { [session] track in Task { await session.dislike(track) } }
                 session.onDislike = { [player] track in player.noteDislike(track) }
                 await session.refreshAccount()
                 player.uid = session.uid

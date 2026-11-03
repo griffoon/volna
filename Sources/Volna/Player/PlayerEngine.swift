@@ -652,10 +652,42 @@ final class PlayerEngine {
             MainActor.assumeIsolated { self?.seek(to: event.positionTime) }
             return .success
         }
+        // Like / dislike on the lock screen and in Control Center: teach the wave without unlocking.
+        center.likeCommand.localizedTitle = "Нравится"
+        center.likeCommand.localizedShortTitle = "Нравится"
+        center.likeCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let track = self.current else { return }
+                self.remoteLike?(track)
+            }
+            return .success
+        }
+        center.dislikeCommand.localizedTitle = "Не рекомендовать"
+        center.dislikeCommand.localizedShortTitle = "Не то"
+        center.dislikeCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let track = self.current else { return }
+                self.remoteDislike?(track)
+            }
+            return .success
+        }
+    }
+
+    /// Lock-screen like/dislike reach the account through these (set by the app).
+    var remoteLike: ((Track) -> Void)?
+    var remoteDislike: ((Track) -> Void)?
+    /// Tells the lock screen whether the current track is already liked.
+    var isLikedProvider: ((Track) -> Bool)?
+
+    /// Re-reads the liked state so the lock-screen heart is filled correctly.
+    func refreshRemoteLike() {
+        guard let track = current else { return }
+        MPRemoteCommandCenter.shared().likeCommand.isActive = isLikedProvider?(track) ?? false
     }
 
     private func updateNowPlaying() {
         guard let track = current else { return }
+        refreshRemoteLike()
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.fullTitle,
             MPMediaItemPropertyArtist: track.artistLine,
