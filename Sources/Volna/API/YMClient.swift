@@ -93,6 +93,23 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Presaves
+
+    /// Upcoming albums the user presaved.
+    func presaves(uid: String) async throws -> [Album] {
+        struct Presaves: Decodable { let upcomingAlbums: [Lenient<Album>]? }
+        let result: Presaves = try await get("users/\(uid)/presaves",
+                                             query: ["includeReleased": "false", "includeUpcoming": "true"])
+        return result.upcomingAlbums?.compactMap(\.value) ?? []
+    }
+
+    /// Presave adds the album to the collection on release day (and likes it).
+    func setPresave(_ on: Bool, albumID: String, uid: String) async throws {
+        var form = ["albumId": albumID]
+        if on { form["likeAfterRelease"] = "true" }
+        let _: AnyDecodable = try await post("users/\(uid)/presaves/\(on ? "add" : "remove")", form: form)
+    }
+
     // MARK: Browse
 
     func metatagTrees() async throws -> MetatagTrees {

@@ -60,6 +60,25 @@ final class Session {
 
     private(set) var likedAlbums: Set<String> = []
     private(set) var pins: [Pin] = []
+    private(set) var presaves: [Album] = []
+
+    func loadPresaves() async {
+        guard let client, let uid, let list = try? await client.presaves(uid: uid) else { return }
+        presaves = list
+    }
+
+    func isPresaved(_ album: Album) -> Bool { presaves.contains { $0.id == album.id } }
+
+    func togglePresave(_ album: Album) async {
+        guard let client, let uid else { return }
+        let on = !isPresaved(album)
+        do {
+            try await client.setPresave(on, albumID: album.id.value, uid: uid)
+            await loadPresaves()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
 
     func loadPins() async {
         guard let client, let list = try? await client.pins() else { return }

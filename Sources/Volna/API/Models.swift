@@ -44,6 +44,16 @@ struct Album: Codable, Hashable, Identifiable, Sendable {
     let year: Int?
     let artists: [Artist]?
     let trackCount: Int?
+    /// ISO 8601; in the future for upcoming releases that can be presaved.
+    var releaseDate: String? = nil
+
+    var releaseDay: Date? {
+        guard let releaseDate else { return nil }
+        return ISO8601DateFormatter().date(from: releaseDate)
+            ?? (try? Date(String(releaseDate.prefix(10)), strategy: .iso8601.year().month().day()))
+    }
+
+    var isUpcoming: Bool { releaseDay.map { $0 > Date() } ?? false }
 }
 
 struct Track: Codable, Hashable, Identifiable, Sendable {
@@ -169,6 +179,7 @@ struct LikesLibrary: Decodable, Sendable {
 struct AlbumWithTracks: Decodable, Sendable {
     let id: FlexibleID
     let title: String
+    let releaseDate: String?
     let coverUri: String?
     let year: Int?
     let artists: [Artist]?

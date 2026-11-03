@@ -23,6 +23,32 @@ struct LibraryView: View {
                 .terminalRow()
                 .listRowSeparator(.hidden)
 
+                if !session.presaves.isEmpty {
+                    Section {
+                        ScrollView(.horizontal) {
+                            LazyHStack(alignment: .top, spacing: 14) {
+                                ForEach(session.presaves) { album in
+                                    NavigationLink { AlbumView(album: album) } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            AlbumCard(album: album)
+                                            if let day = album.releaseDay {
+                                                Text("> \(day.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "ru_RU"))))")
+                                                    .font(Brand.mono(11, weight: .bold))
+                                                    .foregroundStyle(Brand.acid)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .scrollIndicators(.hidden)
+                        .buttonStyle(.plain)
+                        .terminalRow()
+                    } header: {
+                        TerminalLabel(text: "скоро выйдет")
+                    }
+                }
+
                 if !session.pins.isEmpty {
                     Section {
                         ScrollView(.horizontal) {
@@ -120,8 +146,10 @@ struct LibraryView: View {
         guard let client = session.client, let uid = session.uid else { return }
         do {
             async let pins: Void = session.loadPins()
+            async let presaves: Void = session.loadPresaves()
             playlists = try await client.playlists(uid: uid)
             await pins
+            await presaves
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -368,6 +396,14 @@ struct AlbumView: View {
     let album: Album
     @State private var tracks: [Track] = []
     @State private var moreFromArtist: [Album] = []
+    @State private var releaseDate: String?
+
+    /// The album with whatever release date the detail request returned.
+    private var dated: Album {
+        var copy = album
+        copy.releaseDate = releaseDate ?? album.releaseDate
+        return copy
+    }
     @State private var similarArtists: [Artist] = []
     @State private var error: String?
 
@@ -388,6 +424,7 @@ struct AlbumView: View {
                     } shuffle: {
                         player.play(tracks.shuffled())
                     }
+                    upcomingBanner
                     albumActions
                 }
             }
@@ -430,6 +467,37 @@ struct AlbumView: View {
         .task { await load() }
     }
 
+    /// For releases that aren't out yet: the date and a presave toggle.
+    @ViewBuilder
+    private var upcomingBanner: some View {
+        if dated.isUpcoming, let day = dated.releaseDay {
+            let saved = session.isPresaved(dated)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("> скоро").font(Brand.mono(11, weight: .bold)).foregroundStyle(Brand.acid)
+                    Text("выйдет \(day.formatted(.dateTime.day().month(.wide).locale(Locale(identifier: "ru_RU"))))")
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                }
+                Spacer()
+                Button {
+                    Haptics.success()
+                    Task { await session.togglePresave(dated) }
+                } label: {
+                    Label(saved ? "пресейв ✓" : "пресейв", systemImage: saved ? "bell.fill" : "bell")
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(saved ? Brand.ink : Brand.acid)
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .background(saved ? Brand.acid : .clear, in: .capsule)
+                        .overlay(Capsule().stroke(Brand.acid, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Brand.acid.opacity(0.4), lineWidth: 1))
+        }
+    }
+
     private var albumActions: some View {
         let liked = session.isLiked(album: album)
         return HStack(spacing: 10) {
@@ -466,7 +534,9 @@ struct AlbumView: View {
     private func load() async {
         guard let client = session.client else { return }
         do {
-            tracks = try await client.album(id: album.id.value).tracks
+            let full = try await client.album(id: album.id.value)
+            tracks = full.tracks
+            releaseDate = full.releaseDate ?? album.releaseDate
             error = nil
         } catch {
             self.error = error.localizedDescription
