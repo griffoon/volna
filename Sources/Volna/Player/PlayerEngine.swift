@@ -466,7 +466,7 @@ final class PlayerEngine {
                 guard !Task.isCancelled else { return }
                 standbyPlayer.pause()
                 stream = source
-                activePlayer.replaceCurrentItem(with: Self.makeItem(source.url))
+                activePlayer.replaceCurrentItem(with: Self.makeItem(source.url, loudness: track.r128))
                 if let resume { await activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600)) }
                 startActive(resumed: resume != nil && !freshListen)
             } catch {
@@ -532,7 +532,7 @@ final class PlayerEngine {
                   !Task.isCancelled,
                   queue.indices.contains(index + 1), queue[index + 1].id == next.id
             else { return }
-            let item = Self.makeItem(source.url)
+            let item = Self.makeItem(source.url, loudness: next.r128)
             item.preferredForwardBufferDuration = 30
             standbyPlayer.replaceCurrentItem(with: item)
             standbyPlayer.volume = 0
@@ -564,9 +564,9 @@ final class PlayerEngine {
         }
     }
 
-    private static func makeItem(_ url: URL) -> AVPlayerItem {
+    private static func makeItem(_ url: URL, loudness: Loudness?) -> AVPlayerItem {
         let item = AVPlayerItem(url: url)
-        AudioAnalyzer.shared.attach(to: item)
+        AudioAnalyzer.shared.attach(to: item, loudness: loudness)
         return item
     }
 

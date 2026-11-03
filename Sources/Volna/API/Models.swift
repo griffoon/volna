@@ -56,6 +56,8 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     let durationMs: Int?
     let available: Bool?
     let lyricsInfo: LyricsInfo?
+    /// EBU R128 loudness: integrated LUFS and true peak, for volume normalisation.
+    let r128: Loudness?
 
     var artistLine: String { artists.map(\.name).joined(separator: ", ") }
 
@@ -75,7 +77,7 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     var cover: String? { coverUri ?? albums?.first?.coverUri }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, version, artists, albums, coverUri, durationMs, available, lyricsInfo
+        case id, title, version, artists, albums, coverUri, durationMs, available, lyricsInfo, r128
     }
 
     init(from decoder: Decoder) throws {
@@ -89,7 +91,13 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
         durationMs = try? c.decode(Int.self, forKey: .durationMs)
         available = try? c.decode(Bool.self, forKey: .available)
         lyricsInfo = try? c.decode(LyricsInfo.self, forKey: .lyricsInfo)
+        r128 = try? c.decode(Loudness.self, forKey: .r128)
     }
+}
+
+struct Loudness: Codable, Hashable, Sendable {
+    let i: Double?
+    let tp: Double?
 }
 
 struct LyricsInfo: Codable, Hashable, Sendable {

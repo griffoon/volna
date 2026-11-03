@@ -31,11 +31,13 @@ final class AudioAnalyzer: @unchecked Sendable {
     }
 
     /// Installs the tap once the item's audio track is known. Safe to call for every item.
-    func attach(to item: AVPlayerItem) {
+    /// `loudness` is the track's R128 data, used for volume normalisation inside the tap.
+    func attach(to item: AVPlayerItem, loudness: Loudness? = nil) {
         let asset = item.asset
+        let trackGain = AudioProcessing.normalizationGain(for: loudness)
         Task {
             guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
-                  let tap = Self.makeTap(analyzer: self)
+                  let tap = Self.makeTap(analyzer: self, trackGain: trackGain)
             else { return }
             let params = AVMutableAudioMixInputParameters(track: track)
             params.audioTapProcessor = tap
@@ -45,8 +47,8 @@ final class AudioAnalyzer: @unchecked Sendable {
         }
     }
 
-    private static func makeTap(analyzer: AudioAnalyzer) -> MTAudioProcessingTap? {
-        let context = TapContext(analyzer: analyzer)
+    private static func makeTap(analyzer: AudioAnalyzer, trackGain: Float) -> MTAudioProcessingTap? {
+        let context = TapContext(analyzer: analyzer, trackGain: trackGain)
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
             clientInfo: Unmanaged.passRetained(context).toOpaque(),
@@ -56,15 +58,16 @@ final class AudioAnalyzer: @unchecked Sendable {
             finalize: { tap in
                 Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
             },
-            prepare: { tap, _, format in
+            prepare: { tap, maxFrames, format in
                 let context = Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-                context.prepare(format.pointee)
+                context.prepare(format.pointee, maxFrames: Int(maxFrames))
             },
             unprepare: nil,
             process: { tap, frames, _, bufferList, framesOut, flagsOut in
                 let status = MTAudioProcessingTapGetSourceAudio(tap, frames, bufferList, flagsOut, nil, framesOut)
                 guard status == noErr else { return }
                 let context = Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+                context.process(bufferList, frames: Int(framesOut.pointee))
                 context.analyze(bufferList, frames: Int(framesOut.pointee))
             }
         )
@@ -105,15 +108,64 @@ private final class TapContext {
     private var samplesSinceBeat = 0
     private var beat: UInt64 = 0
 
-    init(analyzer: AudioAnalyzer) {
+    // Processing: per-channel EQ filters, rebuilt when the settings version changes.
+    private let trackGain: Float
+    private var filters: [vDSP.Biquad<Float>] = []
+    private var filterVersion = -1
+    private var scratch = [Float]()
+
+    init(analyzer: AudioAnalyzer, trackGain: Float) {
         self.analyzer = analyzer
+        self.trackGain = trackGain
     }
 
-    func prepare(_ format: AudioStreamBasicDescription) {
+    func prepare(_ format: AudioStreamBasicDescription, maxFrames: Int) {
         sampleRate = Float(format.mSampleRate)
         isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
         isInterleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
         channels = Int(max(1, format.mChannelsPerFrame))
+        scratch = [Float](repeating: 0, count: max(maxFrames, 4096))
+        filterVersion = -1
+    }
+
+    /// Equalizer and loudness normalisation, applied in place before the audio reaches the speaker.
+    func process(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
+        guard isFloat, !isInterleaved, frames > 0, frames <= scratch.count else { return }
+        let settings = AudioProcessing.shared.snapshot()
+        let eqActive = settings.eqEnabled && settings.gains.contains { $0 != 0 }
+        var gain: Float = settings.normalize ? trackGain : 1
+        if eqActive { gain *= AudioProcessing.preamp(gains: settings.gains) }
+        guard eqActive || gain != 1 else { return }
+
+        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        if eqActive, filterVersion != settings.version || filters.count != buffers.count {
+            let coefficients = AudioProcessing.coefficients(gains: settings.gains, sampleRate: Double(sampleRate))
+            filters = buffers.indices.compactMap { _ in
+                vDSP.Biquad(coefficients: coefficients, channelCount: 1,
+                            sectionCount: vDSP_Length(AudioProcessing.frequencies.count), ofType: Float.self)
+            }
+            filterVersion = settings.version
+        }
+
+        for (channel, buffer) in buffers.enumerated() {
+            guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+            let samples = UnsafeMutableBufferPointer(start: data, count: frames)
+            if eqActive, filters.indices.contains(channel) {
+                scratch.withUnsafeMutableBufferPointer { tmp in
+                    let input = UnsafeMutableBufferPointer(rebasing: tmp[0..<frames])
+                    _ = input.initialize(from: samples)
+                    var output = samples
+                    filters[channel].apply(input: UnsafeBufferPointer(input), output: &output)
+                }
+            }
+            if gain != 1 {
+                var g = gain
+                vDSP_vsmul(data, 1, &g, data, 1, vDSP_Length(frames))
+            }
+            // Hard safety ceiling; the preamp and peak-aware gain keep this rarely hit.
+            var lo: Float = -1, hi: Float = 1
+            vDSP_vclip(data, 1, &lo, &hi, data, 1, vDSP_Length(frames))
+        }
     }
 
     func analyze(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
