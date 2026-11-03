@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.quality) private var quality = Preferences.Quality.high
     @AppStorage(Preferences.Key.crossfade) private var crossfade = 0.0
     @AppStorage(Theme.coverAccentKey) private var coverAccent = true
+    @AppStorage(HapticBass.storageKey) private var hapticBass = false
     @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
     @Environment(PlayerEngine.self) private var player
 
@@ -58,6 +59,8 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Тактильный бас", isOn: $hapticBass)
+                    .tint(Brand.acid)
                 Toggle("Акцент из обложки", isOn: $coverAccent)
                     .tint(Brand.acid)
                     .onChange(of: coverAccent) {

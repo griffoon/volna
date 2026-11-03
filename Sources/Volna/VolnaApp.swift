@@ -38,8 +38,14 @@ struct VolnaApp: App {
                 player.uid = session.uid
             }
             .onOpenURL(perform: handle)
+            .task(id: hapticBass) {
+                guard hapticBass else { return }
+                await HapticBass.run(player: player)
+            }
         }
     }
+
+    @AppStorage(HapticBass.storageKey) private var hapticBass = false
 
     /// `volna://wave`, `volna://liked`, `volna://toggle` — used by the widget and Control Center button.
     private func handle(_ url: URL) {
