@@ -13,6 +13,8 @@ struct WaveView: View {
     /// The tunnel only renders while the hero page is on screen.
     @State private var heroVisible = true
     @State private var showLog = false
+    /// The wave last played on any device, offered when it differs from plain My Wave.
+    @State private var lastWave: YMClient.LastWave?
 
     private var scrollHint: some View {
         VStack(spacing: 2) {
@@ -129,7 +131,10 @@ struct WaveView: View {
                     }
                 }
             }
-            .task { await loadCharacters() }
+            .task {
+                await loadCharacters()
+                await loadLastWave()
+            }
         }
     }
 
@@ -250,6 +255,22 @@ struct WaveView: View {
 
             transport
 
+            if !waveIsOn, let last = lastWave, let seeds = last.seeds, !seeds.isEmpty {
+                Button {
+                    Haptics.launch()
+                    player.startWave(seeds: seeds, title: last.name ?? "Моя волна")
+                } label: {
+                    Label("продолжить: \(last.name?.lowercased() ?? "прошлая волна")", systemImage: "arrow.uturn.forward")
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(Brand.acid)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(.black.opacity(0.6), in: .capsule)
+                        .overlay(Capsule().stroke(Brand.acid.opacity(0.6), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+
             if !characters.isEmpty {
                 ViewThatFits(in: .horizontal) {
                     chipRow
@@ -283,6 +304,13 @@ struct WaveView: View {
     }
 
     // MARK: Character chips (server-provided "diversity" options)
+
+    private func loadLastWave() async {
+        guard lastWave == nil, let client = session.client, let last = try? await client.lastWave(),
+              let seeds = last.seeds, !seeds.isEmpty, seeds != ["user:onyourwave"]
+        else { return }
+        lastWave = last
+    }
 
     private func loadCharacters() async {
         guard characters.isEmpty, let client = session.client,

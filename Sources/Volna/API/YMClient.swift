@@ -87,6 +87,18 @@ struct YMClient: Sendable {
         try await get("tracks/\(trackID)/download-info")
     }
 
+    // MARK: Last wave
+
+    struct LastWave: Decodable, Sendable {
+        let name: String?
+        let seeds: [String]?
+    }
+
+    /// The wave this account played last on any device.
+    func lastWave() async throws -> LastWave {
+        try await get("rotor/wave/last")
+    }
+
     // MARK: Playlist management
 
     func createPlaylist(title: String, uid: String, isPublic: Bool) async throws -> Playlist {
