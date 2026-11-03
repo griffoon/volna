@@ -260,9 +260,9 @@ struct WaveView: View {
                 .animation(.easeInOut(duration: 0.35), value: headline)
 
             if let track = player.current, hasTrack {
-                CoverImage(uri: track.cover, size: 300, corner: 8)
-                    .frame(width: 96, height: 96)
-                    .shadow(color: .black.opacity(0.6), radius: 16)
+                // Same card as in the player: swipe sideways to switch, vertical drags scroll the page.
+                CoverDeck()
+                    .frame(width: 180, height: 180)
                     .transition(.scale.combined(with: .opacity))
                 trackBar(track)
             }

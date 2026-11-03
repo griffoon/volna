@@ -45,15 +45,18 @@ enum LRCParser {
 final class LyricsLoader {
     private(set) var lyrics: Lyrics?
     private(set) var writers: [String] = []
-    private var cache: [String: (Lyrics, [String])] = [:]
+    /// Where the text came from when it isn't Yandex's own.
+    private(set) var source: String?
+    private var cache: [String: (Lyrics, [String], String?)] = [:]
 
     func load(_ track: Track, client: YMClient?) async {
         let key = track.id.value
         if let cached = cache[key] {
-            (lyrics, writers) = cached
+            (lyrics, writers, source) = cached
             return
         }
         lyrics = nil
+        source = nil
         guard let client else { return }
 
         let info = track.lyricsInfo
@@ -68,8 +71,13 @@ final class LyricsLoader {
            !text.text.isEmpty {
             result = (.plain(text.text), text.writers)
         }
+        var source: String? = nil
+        if case .unavailable = result.0, !Task.isCancelled, let fallback = await LRCLib.lyrics(for: track) {
+            result = (fallback, [])
+            source = "lrclib.net"
+        }
         guard !Task.isCancelled else { return }
-        cache[key] = result
-        (lyrics, writers) = result
+        cache[key] = (result.0, result.1, source)
+        (lyrics, writers, self.source) = (result.0, result.1, source)
     }
 }

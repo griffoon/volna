@@ -105,7 +105,7 @@ struct NowPlayingView: View {
                             .frame(width: 60, height: 60)
                         titleRow
                     }
-                    LyricsView(lyrics: lyrics.lyrics, writers: lyrics.writers)
+                    LyricsView(lyrics: lyrics.lyrics, writers: lyrics.writers, source: lyrics.source)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 } else {
                     Spacer(minLength: 0)

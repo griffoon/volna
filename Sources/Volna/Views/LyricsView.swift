@@ -5,6 +5,7 @@ struct LyricsView: View {
     @Environment(PlayerEngine.self) private var player
     let lyrics: Lyrics?
     let writers: [String]
+    var source: String? = nil
 
     @State private var userScrolling = false
     @State private var resumeTask: Task<Void, Never>?
@@ -105,6 +106,12 @@ struct LyricsView: View {
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.5))
                 .padding(.top, 12)
+        }
+        if let source {
+            Text("текст: \(source)")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.4))
+                .padding(.top, 4)
         }
     }
 
