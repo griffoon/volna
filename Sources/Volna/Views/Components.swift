@@ -86,6 +86,7 @@ struct TrackList: View {
         // Keyed by position: a playlist may hold the same track twice.
         ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
             Button {
+                Haptics.tap()
                 player.play(tracks, startAt: offset)
             } label: {
                 TrackRow(track: track, number: numbered ? offset + 1 : nil)
@@ -95,6 +96,7 @@ struct TrackList: View {
             .contextMenu { TrackMenu(track: track) }
             .swipeActions(edge: .trailing) {
                 Button {
+                    Haptics.success()
                     player.playNext(track)
                 } label: {
                     Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward")
@@ -103,6 +105,7 @@ struct TrackList: View {
             }
             .swipeActions(edge: .leading) {
                 Button {
+                    Haptics.success()
                     Task { await session.toggleLike(track) }
                 } label: {
                     Label("Лайк", systemImage: session.isLiked(track) ? "heart.slash" : "heart")
@@ -172,14 +175,14 @@ struct TerminalActions: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button(action: play) {
+            Button(action: { Haptics.thump(); play() }) {
                 Label("СЛУШАТЬ", systemImage: "play.fill")
                     .font(Brand.mono(13, weight: .bold))
                     .frame(maxWidth: .infinity, minHeight: 46)
                     .foregroundStyle(Brand.ink)
                     .background(Brand.acid, in: .capsule)
             }
-            Button(action: shuffle) {
+            Button(action: { Haptics.tap(); shuffle() }) {
                 Label("ВПЕРЕМЕШКУ", systemImage: "shuffle")
                     .font(Brand.mono(13, weight: .bold))
                     .frame(maxWidth: .infinity, minHeight: 46)

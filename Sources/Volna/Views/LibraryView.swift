@@ -281,13 +281,13 @@ struct AlbumView: View {
         let liked = session.isLiked(album: album)
         return HStack(spacing: 10) {
             Button {
-                Task { await session.toggleLike(album: album) }
+                liked ? Haptics.tap() : Haptics.success(); Task { await session.toggleLike(album: album) }
             } label: {
                 Label(liked ? "в коллекции" : "в коллекцию", systemImage: liked ? "heart.fill" : "heart")
                     .foregroundStyle(liked ? Brand.acid : .white)
             }
             Button {
-                player.startWave(seeds: ["album:\(album.id.value)"], title: "Волна: \(album.title)")
+                Haptics.launch(); player.startWave(seeds: ["album:\(album.id.value)"], title: "Волна: \(album.title)")
             } label: {
                 Label("волна по альбому", systemImage: "dot.radiowaves.left.and.right")
             }
@@ -296,7 +296,6 @@ struct AlbumView: View {
         .foregroundStyle(.white)
         .buttonStyle(.plain)
         .labelStyle(.titleAndIcon)
-        .sensoryFeedback(.success, trigger: liked)
     }
 
     private func shelf<Content: View>(@ViewBuilder content: () -> Content) -> some View {

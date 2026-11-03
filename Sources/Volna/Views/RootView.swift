@@ -54,6 +54,9 @@ struct RootView: View {
         .onChange(of: router.destination?.id) { _, id in
             if id != nil { showPlayer = false }
         }
+        .onChange(of: player.errorMessage) { _, message in
+            if message != nil { Haptics.error() }
+        }
         .task(id: player.current?.cover) {
             await Theme.shared.update(coverURI: player.current?.cover)
         }

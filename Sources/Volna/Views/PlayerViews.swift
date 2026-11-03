@@ -20,14 +20,14 @@ struct MiniPlayer: View {
             Spacer(minLength: 0)
             SpectrumText(isPlaying: player.isPlaying)
             Button {
-                player.togglePlay()
+                Haptics.thump(); player.togglePlay()
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .contentTransition(.symbolEffect(.replace))
             }
             .disabled(player.current == nil)
             Button {
-                player.next()
+                Haptics.step(); player.next()
             } label: {
                 Image(systemName: "forward.fill")
             }
@@ -119,7 +119,7 @@ struct NowPlayingView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    if let album = player.current?.albums?.first { router.destination = .album(album) }
+                    Haptics.tap(); if let album = player.current?.albums?.first { router.destination = .album(album) }
                 } label: {
                     ScrambleText(text: player.current?.fullTitle ?? "—")
                         .font(Brand.display(26))
@@ -152,7 +152,7 @@ struct NowPlayingView: View {
             if let track = player.current {
                 let liked = session.isLiked(track)
                 Button {
-                    Task { await session.toggleLike(track) }
+                    liked ? Haptics.tap() : Haptics.success(); Task { await session.toggleLike(track) }
                 } label: {
                     Image(systemName: liked ? "heart.fill" : "heart")
                         .font(.system(size: 26, weight: .semibold))
@@ -168,12 +168,12 @@ struct NowPlayingView: View {
 
     private var controls: some View {
         HStack {
-            Button { player.previous() } label: {
+            Button { Haptics.step(); player.previous() } label: {
                 Image(systemName: "backward.fill").frame(width: 64, height: 64)
             }
             .accessibilityLabel("Назад")
             Spacer()
-            Button { player.togglePlay() } label: {
+            Button { Haptics.thump(); player.togglePlay() } label: {
                 Group {
                     if player.isLoading {
                         ProgressView().tint(Brand.ink)
@@ -190,7 +190,7 @@ struct NowPlayingView: View {
             }
             .accessibilityLabel(player.isPlaying ? "Пауза" : "Играть")
             Spacer()
-            Button { player.next() } label: {
+            Button { Haptics.step(); player.next() } label: {
                 Image(systemName: "forward.fill").frame(width: 64, height: 64)
             }
             .accessibilityLabel("Дальше")
@@ -203,10 +203,10 @@ struct NowPlayingView: View {
     private var actions: some View {
         HStack {
             ActionItem(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: "текст", active: showLyrics) {
-                withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
+                Haptics.tick(); withAnimation(.spring(duration: 0.55, bounce: 0.2)) { showLyrics.toggle() }
             }
             Spacer()
-            ActionItem(symbol: "list.bullet", label: "очередь", active: false) { showQueue = true }
+            ActionItem(symbol: "list.bullet", label: "очередь", active: false) { Haptics.tick(); showQueue = true }
             Spacer()
             Menu {
                 sleepMenu
@@ -237,13 +237,13 @@ struct NowPlayingView: View {
             case .endOfTrack:
                 Text("Выключится после трека")
             }
-            Button("Отменить таймер", systemImage: "xmark", role: .destructive) { player.setSleepTimer(nil) }
+            Button("Отменить таймер", systemImage: "xmark", role: .destructive) { Haptics.tap(); player.setSleepTimer(nil) }
         }
         Section("Таймер сна") {
             ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
-                Button("\(minutes) мин") { player.setSleepTimer(.at(.now.addingTimeInterval(Double(minutes) * 60))) }
+                Button("\(minutes) мин") { Haptics.success(); player.setSleepTimer(.at(.now.addingTimeInterval(Double(minutes) * 60))) }
             }
-            Button("В конце трека", systemImage: "music.note") { player.setSleepTimer(.endOfTrack) }
+            Button("В конце трека", systemImage: "music.note") { Haptics.success(); player.setSleepTimer(.endOfTrack) }
         }
     }
 }
@@ -301,7 +301,15 @@ struct TerminalScrubber: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            dragging = Double(min(max(value.location.x / geo.size.width, 0), 1)) * total
+                            let next = Double(min(max(value.location.x / geo.size.width, 0), 1)) * total
+                            // A faint tick every 10% of the track, a soft press when the drag starts.
+                            if dragging == nil {
+                                Haptics.tap()
+                            } else if let previous = dragging,
+                                      Int(previous / total * 10) != Int(next / total * 10) {
+                                Haptics.tick()
+                            }
+                            dragging = next
                         }
                         .onEnded { _ in
                             if let target = dragging { onSeek(target) }

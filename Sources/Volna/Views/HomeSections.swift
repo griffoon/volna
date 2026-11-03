@@ -25,7 +25,7 @@ struct HomeSections: View {
                     .foregroundStyle(.white.opacity(0.55))
                 Spacer()
                 Button {
-                    Task { await reload() }
+                    Haptics.tap(); Task { await reload(); Haptics.success() }
                 } label: {
                     Label(loading ? "обновляю…" : "обновить", systemImage: "arrow.clockwise")
                         .font(Brand.mono(12, weight: .bold))

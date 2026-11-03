@@ -62,24 +62,30 @@ struct TrackMenu: View {
     var body: some View {
         Section {
             Button("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                Haptics.success()
                 player.playNext(track)
             }
             Button("В конец очереди", systemImage: "text.line.last.and.arrowtriangle.forward") {
+                Haptics.success()
                 player.enqueue(track)
             }
         }
         Section {
             Button("Волна по треку", systemImage: "dot.radiowaves.left.and.right") {
+                Haptics.launch()
                 player.startWave(seeds: ["track:\(track.id.value)"], title: "Волна по треку")
             }
             Button(session.isLiked(track) ? "Убрать из любимых" : "Нравится",
                    systemImage: session.isLiked(track) ? "heart.slash" : "heart") {
+                session.isLiked(track) ? Haptics.tap() : Haptics.success()
                 Task { await session.toggleLike(track) }
             }
             Button("Добавить в плейлист", systemImage: "text.badge.plus") {
+                Haptics.tap()
                 router.destination = .addToPlaylist(track)
             }
             Button("Не рекомендовать", systemImage: "hand.thumbsdown", role: .destructive) {
+                Haptics.slam()
                 Task { await session.dislike(track) }
             }
         }

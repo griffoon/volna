@@ -170,7 +170,7 @@ struct AddToPlaylistView: View {
         defer { adding = nil }
         do {
             try await client.addToPlaylist(track, uid: uid, kind: playlist.kind.value)
-            router.destination = nil
+            Haptics.success(); router.destination = nil
         } catch {
             self.error = error.localizedDescription
         }

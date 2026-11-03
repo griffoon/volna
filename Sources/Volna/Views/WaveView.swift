@@ -65,7 +65,7 @@ struct WaveView: View {
                         .containerRelativeFrame(.vertical)
                         .contentShape(.rect)
                         .onLongPressGesture(minimumDuration: 0.45) {
-                            ascii.toggle()
+                            ascii.toggle(); Haptics.thump()
                             flash(ascii ? "> terminal mode: on" : "> terminal mode: off")
                         }
 
@@ -135,7 +135,7 @@ struct WaveView: View {
 
     private var hud: some View {
         Button {
-            withAnimation(.snappy) { showLog.toggle() }
+            Haptics.tick(); withAnimation(.snappy) { showLog.toggle() }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.waveTag ?? "sess#---- · idle")
@@ -170,7 +170,7 @@ struct WaveView: View {
         let liked = session.isLiked(track)
         return HStack(spacing: 8) {
             RoundGlassButton(symbol: "heart.slash", label: "Не рекомендовать") {
-                Task { await session.dislike(track) }
+                Haptics.slam(); Task { await session.dislike(track) }
                 flash("> dislike: \(track.title.lowercased())")
             }
             Menu {
@@ -187,9 +187,8 @@ struct WaveView: View {
             }
             RoundGlassButton(symbol: liked ? "heart.fill" : "heart", label: liked ? "Убрать из любимых" : "Нравится",
                              tint: liked ? Brand.acid : .white) {
-                Task { await session.toggleLike(track) }
+                liked ? Haptics.tap() : Haptics.success(); Task { await session.toggleLike(track) }
             }
-            .sensoryFeedback(.success, trigger: liked)
             Menu {
                 TrackMenu(track: track)
             } label: {
@@ -203,17 +202,17 @@ struct WaveView: View {
     private var transport: some View {
         HStack(spacing: 34) {
             if waveIsOn {
-                Button { player.goBack() } label: {
+                Button { Haptics.step(); player.goBack() } label: {
                     Image(systemName: "backward.end.fill").font(.system(size: 24, weight: .bold))
                 }
                 .accessibilityLabel("Предыдущий трек")
                 .disabled(player.previousTrack == nil)
             }
             PlayPulseButton(isPlaying: waveIsOn && player.isPlaying, isLoading: player.isLoading) {
-                if waveIsOn { player.togglePlay() } else { player.startWave() }
+                if waveIsOn { Haptics.thump(); player.togglePlay() } else { Haptics.launch(); player.startWave() }
             }
             if waveIsOn {
-                Button { player.next() } label: {
+                Button { Haptics.step(); player.next() } label: {
                     Image(systemName: "forward.end.fill").font(.system(size: 24, weight: .bold))
                 }
                 .accessibilityLabel("Следующий трек")
@@ -266,7 +265,7 @@ struct WaveView: View {
                     ForEach(characters, id: \.self) { option in
                         let selected = option.serializedSeed.map(characterSeeds.contains) ?? characterSeeds.isEmpty
                         Button {
-                            pick(option)
+                            Haptics.tick(); pick(option)
                         } label: {
                             Text(option.name.lowercased())
                                 .font(Brand.mono(11, weight: selected ? .bold : .medium))

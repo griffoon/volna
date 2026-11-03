@@ -41,14 +41,17 @@ struct CoverDeck: View {
                         // Resist when there is nothing on that side.
                         let x = value.translation.width
                         let blocked = (x < 0 && player.nextTrack == nil && !player.isWave) || (x > 0 && player.previousTrack == nil)
-                        drag = blocked ? x * 0.25 : x
+                        let newDrag = blocked ? x * 0.25 : x
+                        // A detent click when the card crosses the point where letting go would switch.
+                        if (abs(drag) > w * Self.threshold) != (abs(newDrag) > w * Self.threshold), !blocked { Haptics.tick() }
+                        drag = newDrag
                     }
                     .onEnded { value in
                         let flick = value.predictedEndTranslation.width
                         if (drag < -w * Self.threshold || flick < -w * 0.6), player.nextTrack != nil || player.isWave {
-                            commit(to: -(w + Self.gap)) { player.next() }
+                            Haptics.thump(); commit(to: -(w + Self.gap)) { player.next() }
                         } else if (drag > w * Self.threshold || flick > w * 0.6), player.previousTrack != nil {
-                            commit(to: w + Self.gap) { player.goBack() }
+                            Haptics.thump(); commit(to: w + Self.gap) { player.goBack() }
                         } else {
                             withAnimation(.spring(duration: 0.35, bounce: 0.35)) { drag = 0 }
                         }
@@ -56,7 +59,6 @@ struct CoverDeck: View {
             )
         }
         .aspectRatio(1, contentMode: .fit)
-        .sensoryFeedback(.selection, trigger: player.current?.id)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(player.current.map { "Обложка: \($0.fullTitle)" } ?? "Обложка")
         .accessibilityHint("Свайп влево — следующий трек, вправо — предыдущий")
@@ -115,19 +117,22 @@ struct MiniPlayerSwipe: ViewModifier {
                 DragGesture(minimumDistance: 18)
                     .onChanged { value in
                         guard abs(value.translation.width) > abs(value.translation.height), player.current != nil else { return }
-                        drag = value.translation.width
+                        let newDrag = value.translation.width
+                        if (abs(drag) > Self.commitDistance) != (abs(newDrag) > Self.commitDistance) { Haptics.tick() }
+                        drag = newDrag
                     }
                     .onEnded { value in
                         let x = value.translation.width
                         if x < -Self.commitDistance, player.nextTrack != nil || player.isWave {
+                            Haptics.thump()
                             player.next()
                         } else if x > Self.commitDistance, player.previousTrack != nil {
+                            Haptics.thump()
                             player.goBack()
                         }
                         withAnimation(.spring(duration: 0.35, bounce: 0.3)) { drag = 0 }
                     }
             )
-            .sensoryFeedback(.selection, trigger: player.current?.id)
     }
 
     @ViewBuilder

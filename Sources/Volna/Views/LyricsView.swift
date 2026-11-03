@@ -59,7 +59,7 @@ struct LyricsView: View {
                                 blur: userScrolling ? 0 : blur(index, active: active)
                             )
                             .id(index)
-                            .onTapGesture { player.seek(to: line.time) }
+                            .onTapGesture { Haptics.tick(); player.seek(to: line.time) }
                         }
                         credits
                     }
