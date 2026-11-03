@@ -346,8 +346,8 @@ struct QueueView: View {
                     }
                 }
                 Section {
-                    ForEach(Array(player.upNext.enumerated()), id: \.element.id) { offset, track in
-                        Button { player.jump(to: track) } label: { TrackRow(track: track, number: offset + 1) }
+                    ForEach(Array(player.upNext.enumerated()), id: \.offset) { offset, track in
+                        Button { player.jump(toIndex: player.index + 1 + offset) } label: { TrackRow(track: track, number: offset + 1) }
                             .buttonStyle(.plain)
                             .terminalRow()
                     }

@@ -319,8 +319,9 @@ final class PlayerEngine {
         loadCurrent()
     }
 
-    func jump(to track: Track) {
-        guard let position = queue.firstIndex(of: track) else { return }
+    /// By position, so a track that appears twice in the queue jumps to the right copy.
+    func jump(toIndex position: Int) {
+        guard queue.indices.contains(position) else { return }
         reportSkipIfNeeded()
         index = position
         invalidatePreload()

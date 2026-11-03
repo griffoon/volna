@@ -83,7 +83,8 @@ struct TrackList: View {
     var numbered = false
 
     var body: some View {
-        ForEach(Array(tracks.enumerated()), id: \.element.id) { offset, track in
+        // Keyed by position: a playlist may hold the same track twice.
+        ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
             Button {
                 player.play(tracks, startAt: offset)
             } label: {

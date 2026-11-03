@@ -112,7 +112,7 @@ struct HomeSections: View {
     private func trackBlock(_ title: String, tracks: [Track], numbered: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             TerminalLabel(text: title)
-            ForEach(Array(tracks.enumerated()), id: \.element.id) { offset, track in
+            ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
                 Button {
                     player.play(tracks, startAt: offset)
                 } label: {
