@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// Shows the mini player only once something has been played. Hiding the accessory needs
+/// iOS 26.1; on 26.0 it stays visible as before.
+private struct MiniPlayerAccessory<Accessory: View>: ViewModifier {
+    let visible: Bool
+    @ViewBuilder let accessory: () -> Accessory
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) {
+            content.tabViewBottomAccessory(isEnabled: visible, content: accessory)
+        } else {
+            content.tabViewBottomAccessory(content: accessory)
+        }
+    }
+}
+
 struct RootView: View {
     enum TabID: Hashable {
         case wave, library, search
@@ -24,10 +39,10 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory {
+        .modifier(MiniPlayerAccessory(visible: player.current != nil) {
             MiniPlayer { showPlayer = true }
                 .matchedTransitionSource(id: "player", in: playerZoom)
-        }
+        })
         .sheet(isPresented: $showPlayer) {
             NowPlayingView()
                 .navigationTransition(.zoom(sourceID: "player", in: playerZoom))
