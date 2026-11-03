@@ -12,7 +12,8 @@ struct CoverVisualizer: UIViewRepresentable {
     /// False pauses rendering entirely, e.g. when scrolled off screen.
     var active = true
     var accent: SIMD3<Float>
-    var effect: VisualizerEffect = .breath
+    var effect: VisualizerEffect = .smoke
+    var palette: [SIMD3<Float>] = Theme.defaultSmoke
 
     func makeCoordinator() -> VisualizerRenderer { VisualizerRenderer() }
 
@@ -33,6 +34,7 @@ struct CoverVisualizer: UIViewRepresentable {
         renderer.isPlaying = isPlaying
         renderer.accent = accent
         renderer.effect = effect
+        renderer.palette = palette
         renderer.setCover(coverURI)
         view.isPaused = !active
     }
@@ -78,6 +80,9 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         var pad1: Float = 0
         var pad2: Float = 0
         var accent: SIMD4<Float>
+        var core: SIMD4<Float>
+        var glow: SIMD4<Float>
+        var shade: SIMD4<Float>
     }
 
     /// Binary glyph ramp, darkest first.
@@ -89,7 +94,8 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
     var ascii = true
     var isPlaying = false
     var accent = Theme.defaultAccent
-    var effect: VisualizerEffect = .breath
+    var effect: VisualizerEffect = .smoke
+    var palette: [SIMD3<Float>] = Theme.defaultSmoke
 
     private var queue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState?
@@ -222,7 +228,10 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
                 ascii: ascii ? 1 : 0, time: time, bass: bass, mid: mid, high: high, kick: kick, flash: flash,
                 midHit: midHit, highHit: highHit, hasCover: cover == nil ? 0 : 1,
                 effect: Float(effect.rawValue), beatPhase: beatPhase,
-                accent: SIMD4(accent, 1)
+                accent: SIMD4(accent, 1),
+                core: SIMD4(palette[safe: 0] ?? accent, 1),
+                glow: SIMD4(palette[safe: 1] ?? accent, 1),
+                shade: SIMD4(palette[safe: 2] ?? accent, 1)
             )
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -283,7 +292,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         float mid; float high; float kick; float flash;
         float midHit; float highHit; float hasCover; float effect;
         float beatPhase; float pad0; float pad1; float pad2;
-        float4 accent;
+        float4 accent; float4 core; float4 glow; float4 shade;
     };
 
     float hash21(float2 p) {
@@ -305,10 +314,48 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         return luma(cover.sample(smp, coverUV(cuv, res)).rgb);
     }
 
+    float noise2(float2 p) {
+        float2 i = floor(p), f = fract(p);
+        float2 w = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash21(i), hash21(i + float2(1, 0)), w.x),
+                   mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), w.x), w.y);
+    }
+
+    float fbm(float2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 5; i++) {
+            v += a * noise2(p);
+            p = float2x2(1.6, 1.2, -1.2, 1.6) * p;
+            a *= 0.5;
+        }
+        return v;
+    }
+
+    // Smoke: a glowing cloud in the cover's colours, domain-warped so it folds like light in fog.
+    // Bass swells and brightens it, mids speed up the folding, highs draw fine light streaks.
+    float4 smoke(float2 uv, constant U& u) {
+        float2 p = (uv - float2(0.5, 0.38)) * float2(u.res.x / u.res.y, 1.0) * 1.6;
+        float t = u.time * 0.18 * (1.0 + u.mid * 0.8);
+        float2 q = float2(fbm(p + t), fbm(p - t + 3.1));
+        float2 r = float2(fbm(p + 2.0 * q + float2(1.7, 9.2) + t * 1.3),
+                          fbm(p + 2.0 * q + float2(8.3, 2.8) - t));
+        float f = fbm(p + 2.6 * r);
+        float radius = length(p) * (1.15 - 0.28 * u.bass - 0.18 * u.kick);
+        float cloud = smoothstep(1.05, 0.05, radius + (f - 0.5) * 0.6);
+        float3 col = mix(u.shade.rgb * 0.7, u.glow.rgb, clamp(f * f * 2.4, 0.0, 1.0));
+        col = mix(col, u.core.rgb, clamp(length(q) * 0.85 - 0.15, 0.0, 1.0));
+        col += u.core.rgb * pow(clamp(f, 0.0, 1.0), 3.0) * (0.6 + 1.4 * u.bass);
+        float intensity = cloud * (0.45 + 0.9 * f) * (0.75 + 0.45 * u.bass + 0.35 * u.kick);
+        float streak = pow(abs(sin(p.x * 14.0 + f * 7.0 + t * 5.0)), 48.0) * (u.high * 0.6 + u.highHit) * cloud;
+        float3 outc = col * intensity + streak * u.glow.rgb + u.flash * 0.08 * u.core.rgb;
+        return float4(outc, 1.0);
+    }
+
     fragment float4 visFragment(VOut in [[stage_in]], constant U& u [[buffer(0)]],
                                 texture2d<float> cover [[texture(0)]], texture2d<float> atlas [[texture(1)]],
                                 sampler smp [[sampler(0)]]) {
         float2 uv = in.pos.xy / u.res;
+        if (int(u.effect + 0.5) == 4) { return smoke(uv, u); }
         float2 grid = u.ascii > 0.5 ? u.grid : u.res / 3.0;
         float2 g = uv * grid;
         float2 cell = floor(g);
@@ -373,7 +420,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
 
 /// Which way the cover reacts to music on the Wave screen.
 enum VisualizerEffect: Int, CaseIterable, Identifiable {
-    case breath, relief, scanner, matrix
+    case breath, relief, scanner, matrix, smoke
 
     var id: Int { rawValue }
 
@@ -383,6 +430,7 @@ enum VisualizerEffect: Int, CaseIterable, Identifiable {
         case .relief: "Рельеф"
         case .scanner: "Сканер"
         case .matrix: "Матрица"
+        case .smoke: "Дым"
         }
     }
 
@@ -392,8 +440,13 @@ enum VisualizerEffect: Int, CaseIterable, Identifiable {
         case .relief: "яркие места выпирают на басу"
         case .scanner: "на каждый удар луч проявляет обложку"
         case .matrix: "обложка проступает сквозь дождь символов"
+        case .smoke: "светящееся облако в цветах обложки, как в Яндексе"
         }
     }
 
     static let storageKey = "visualizerEffect"
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

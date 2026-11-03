@@ -6,7 +6,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.quality) private var quality = Preferences.Quality.high
     @AppStorage(Preferences.Key.crossfade) private var crossfade = 0.0
     @AppStorage(Theme.coverAccentKey) private var coverAccent = true
-    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.breath.rawValue
+    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
     @Environment(PlayerEngine.self) private var player
 
     var body: some View {

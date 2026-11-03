@@ -6,7 +6,7 @@ struct WaveView: View {
     @Environment(Session.self) private var session
     @Environment(Router.self) private var router
     @AppStorage("tunnelASCII") private var ascii = true
-    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.breath.rawValue
+    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
     @State private var toast: String?
     @State private var characters: [WaveSettings.Option] = []
     @State private var characterSeeds: Set<String> = []
@@ -38,7 +38,8 @@ struct WaveView: View {
             ZStack {
                 CoverVisualizer(coverURI: player.current?.cover, ascii: ascii, isPlaying: player.isPlaying,
                                 active: heroVisible, accent: Theme.shared.accentRGB,
-                                effect: VisualizerEffect(rawValue: effectRaw) ?? .breath)
+                                effect: VisualizerEffect(rawValue: effectRaw) ?? .smoke,
+                                palette: Theme.shared.smokePalette)
                     .ignoresSafeArea()
 
                 // Soft scrim under the text column so labels read over the brightest glyphs.
@@ -46,6 +47,8 @@ struct WaveView: View {
                                startRadius: 40, endRadius: 280)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
+                    // The smoke is meant to glow behind the title, so it gets no scrim.
+                    .opacity(effectRaw == VisualizerEffect.smoke.rawValue ? 0 : 1)
 
                 ScrollView {
                     VStack(spacing: 0) {
@@ -162,62 +165,91 @@ struct WaveView: View {
         .accessibilityLabel("Журнал отправки событий")
     }
 
-    private var waveActions: some View {
-        HStack(spacing: 10) {
-            if let track = player.current {
-                Button {
-                    Task { await session.dislike(track) }
-                    flash("> dislike: \(track.title.lowercased())")
-                } label: {
-                    Label("не то", systemImage: "hand.thumbsdown")
-                }
-                let liked = session.isLiked(track)
-                Button {
-                    Task { await session.toggleLike(track) }
-                } label: {
-                    Label(liked ? "в любимых" : "нравится", systemImage: liked ? "heart.fill" : "heart")
-                }
-                .foregroundStyle(liked ? Brand.acid : .white)
+    /// [dislike] [track pill] [like] [more] — the Yandex row, dislike in plain sight.
+    private func trackBar(_ track: Track) -> some View {
+        let liked = session.isLiked(track)
+        return HStack(spacing: 8) {
+            RoundGlassButton(symbol: "heart.slash", label: "Не рекомендовать") {
+                Task { await session.dislike(track) }
+                flash("> dislike: \(track.title.lowercased())")
             }
+            Menu {
+                TrackMenu(track: track)
+            } label: {
+                ScrambleText(text: track.fullTitle)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 18)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(.black.opacity(0.45), in: .capsule)
+                    .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+            }
+            RoundGlassButton(symbol: liked ? "heart.fill" : "heart", label: liked ? "Убрать из любимых" : "Нравится",
+                             tint: liked ? Brand.acid : .white) {
+                Task { await session.toggleLike(track) }
+            }
+            .sensoryFeedback(.success, trigger: liked)
+            Menu {
+                TrackMenu(track: track)
+            } label: {
+                RoundGlassLabel(symbol: "ellipsis", tint: .white)
+            }
+            .accessibilityLabel("Ещё")
         }
-        .font(Brand.mono(12, weight: .bold))
-        .labelStyle(.titleAndIcon)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .frame(height: 34)
-        .background(.black.opacity(0.78), in: .capsule)
-        .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 1))
     }
 
-    private var center: some View {
-        VStack(spacing: 22) {
+    /// Previous · play · next, with the acid play button in the middle.
+    private var transport: some View {
+        HStack(spacing: 34) {
+            if waveIsOn {
+                Button { player.goBack() } label: {
+                    Image(systemName: "backward.end.fill").font(.system(size: 24, weight: .bold))
+                }
+                .accessibilityLabel("Предыдущий трек")
+                .disabled(player.previousTrack == nil)
+            }
             PlayPulseButton(isPlaying: waveIsOn && player.isPlaying, isLoading: player.isLoading) {
                 if waveIsOn { player.togglePlay() } else { player.startWave() }
             }
-
-            Text(title == "Моя волна" ? "Моя\nволна" : title)
-                .font(Brand.display(46))
-                .multilineTextAlignment(.center)
-                .lineSpacing(-6)
-                .minimumScaleFactor(0.5)
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.7), radius: 16)
-
-            Group {
-                if let track = player.current, waveIsOn {
-                    ScrambleText(text: "\(track.fullTitle) — \(track.artistLine)")
-                } else {
-                    Text(player.isLoading ? "> подбираем…" : "> нажми и слушай")
+            if waveIsOn {
+                Button { player.next() } label: {
+                    Image(systemName: "forward.end.fill").font(.system(size: 24, weight: .bold))
                 }
+                .accessibilityLabel("Следующий трек")
             }
-            .font(Brand.mono(14, weight: .bold))
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.black.opacity(0.78), in: .rect(cornerRadius: 4))
+        }
+        .foregroundStyle(.white.opacity(0.85))
+        .buttonStyle(.plain)
+    }
 
-            if waveIsOn { waveActions }
+    /// "Моя волна" until something plays, then the artist — the way Yandex does it.
+    private var headline: String {
+        guard waveIsOn, let artist = player.current?.artists.first?.name else { return title }
+        return artist
+    }
+
+    private var center: some View {
+        VStack(spacing: 18) {
+            Text(headline)
+                .font(Brand.display(52))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.4)
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 18)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.35), value: headline)
+
+            if let track = player.current, waveIsOn {
+                CoverImage(uri: track.cover, size: 300, corner: 8)
+                    .frame(width: 96, height: 96)
+                    .shadow(color: .black.opacity(0.6), radius: 16)
+                    .transition(.scale.combined(with: .opacity))
+                trackBar(track)
+            }
+
+            transport
 
             if !characters.isEmpty {
                 ViewThatFits(in: .horizontal) {
@@ -279,6 +311,33 @@ struct WaveView: View {
             try? await Task.sleep(for: .seconds(1.4))
             withAnimation(.easeIn(duration: 0.3)) { if toast == message { toast = nil } }
         }
+    }
+}
+
+private struct RoundGlassLabel: View {
+    let symbol: String
+    var tint: Color = .white
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 50, height: 50)
+            .background(.black.opacity(0.45), in: .circle)
+            .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+    }
+}
+
+private struct RoundGlassButton: View {
+    let symbol: String
+    let label: String
+    var tint: Color = .white
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { RoundGlassLabel(symbol: symbol, tint: tint) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
     }
 }
 
