@@ -20,7 +20,9 @@ final class PlayerEngine {
 
     private(set) var queue: [Track] = []
     private(set) var index = 0
-    private(set) var isPlaying = false
+    private(set) var isPlaying = false {
+        didSet { if !isPlaying, oldValue { pausedAt = Date() } }
+    }
     private(set) var isLoading = false
     private(set) var elapsed: Double = 0 {
         didSet { elapsedStamp = Date() }
@@ -63,7 +65,14 @@ final class PlayerEngine {
     /// The listen in progress, reported to `/play-audio` when it starts and when it ends.
     private var listen: (track: Track, playID: String, from: String)?
 
+    private var pausedAt: Date?
+    private var retriedTrackID: FlexibleID?
+    private var consecutiveFailures = 0
+
     private static let logLength = 6
+    /// After this long on pause the stream link is assumed dead and refetched on resume.
+    private static let staleAfter: TimeInterval = 15 * 60
+    private static let maxConsecutiveFailures = 4
     private static let collectionFrom = "mobile-own_collection-default"
 
     /// Refill My Wave when this many tracks are left.
@@ -99,6 +108,13 @@ final class PlayerEngine {
     /// Keeps `isPlaying` honest when iOS pauses us: unplugged headphones, calls, Siri, other apps.
     private func observeSystemPauses() {
         for player in players {
+            observers.append(player.observe(\.currentItem?.status) { [weak self, weak player] observed, _ in
+                let failed = observed.currentItem?.status == .failed
+                Task { @MainActor in
+                    guard failed, let self, let player, player === self.activePlayer else { return }
+                    self.recoverFromItemFailure()
+                }
+            })
             observers.append(player.observe(\.timeControlStatus) { [weak self, weak player] observed, _ in
                 let status = observed.timeControlStatus
                 Task { @MainActor in
@@ -116,6 +132,15 @@ final class PlayerEngine {
             })
         }
         let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let item = note.object as AnyObject?
+            MainActor.assumeIsolated {
+                guard let self, item === self.activePlayer.currentItem else { return }
+                self.recoverFromItemFailure()
+            }
+        })
         observers.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -260,6 +285,10 @@ final class PlayerEngine {
 
     func togglePlay() {
         guard current != nil else { return }
+        if !isPlaying, let pausedAt, Date().timeIntervalSince(pausedAt) > Self.staleAfter {
+            // Stream links expire; after a long pause fetch a fresh one and continue from here.
+            return loadCurrent(resumeAt: elapsed)
+        }
         if isPlaying { activePlayer.pause() } else { activePlayer.play() }
         isPlaying.toggle()
         updateNowPlaying()
@@ -376,16 +405,17 @@ final class PlayerEngine {
 
     // MARK: Loading
 
-    private func loadCurrent() {
+    private func loadCurrent(resumeAt resume: Double? = nil) {
         guard let track = current else { return }
+        if resume == nil { retriedTrackID = nil }
         loadTask?.cancel()
         fadeTask?.cancel()
         isCrossfading = false
-        elapsed = 0
+        elapsed = resume ?? 0
         duration = Double(track.durationMs ?? 0) / 1000
         updateNowPlaying()
 
-        if let ready = preloaded, ready.trackID == track.id, standbyPlayer.currentItem === ready.item {
+        if resume == nil, let ready = preloaded, ready.trackID == track.id, standbyPlayer.currentItem === ready.item {
             preloaded = nil
             stream = ready.source
             let old = activePlayer
@@ -406,22 +436,23 @@ final class PlayerEngine {
                 standbyPlayer.pause()
                 stream = source
                 activePlayer.replaceCurrentItem(with: Self.makeItem(source.url))
-                startActive()
+                if let resume { await activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600)) }
+                startActive(resumed: resume != nil)
             } catch {
                 guard !Task.isCancelled else { return }
-                isLoading = false
-                errorMessage = "\(track.title): \(error.localizedDescription)"
+                skipUnplayable(track, reason: WaveSession.describe(error))
             }
         }
     }
 
-    private func startActive() {
+    private func startActive(resumed: Bool = false) {
         activePlayer.volume = 1
         activePlayer.play()
         isPlaying = true
         isLoading = false
         updateNowPlaying()
-        if let track = current {
+        // A resumed stream is the same listen continuing, not a new one.
+        if !resumed, let track = current {
             wave?.started(track)
             beginListen(track)
         }
@@ -429,6 +460,34 @@ final class PlayerEngine {
             refillWave(thenAdvance: false)
         }
         preloadNext()
+    }
+
+    /// A track that won't play is skipped quietly; only a run of failures interrupts the user.
+    private func skipUnplayable(_ track: Track, reason: String) {
+        isLoading = false
+        consecutiveFailures += 1
+        log("skip «\(track.title.lowercased())» · \(reason)")
+        guard consecutiveFailures < Self.maxConsecutiveFailures else {
+            consecutiveFailures = 0
+            activePlayer.pause()
+            isPlaying = false
+            errorMessage = "Подряд не играют \(Self.maxConsecutiveFailures) трека. Проверь интернет или подписку."
+            return
+        }
+        advance()
+    }
+
+    /// The playing item died (expired link, network drop): fetch a fresh link once and continue
+    /// from the same spot; if that fails too, skip the track.
+    private func recoverFromItemFailure() {
+        guard let track = current, !isLoading else { return }
+        if retriedTrackID != track.id {
+            retriedTrackID = track.id
+            log("relink «\(track.title.lowercased())»")
+            loadCurrent(resumeAt: elapsed)
+        } else {
+            skipUnplayable(track, reason: "stream failed")
+        }
     }
 
     private func preloadNext() {
@@ -527,6 +586,7 @@ final class PlayerEngine {
 
     private func tick(_ time: CMTime) {
         elapsed = time.seconds.isFinite ? time.seconds : 0
+        if elapsed > 2 { consecutiveFailures = 0 }
         if let itemDuration = activePlayer.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
             duration = itemDuration
         }
