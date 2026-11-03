@@ -73,6 +73,12 @@ struct YMClient: Sendable {
         try await get("search", query: ["text": text, "type": "all", "page": "0", "nocorrect": "false"])
     }
 
+    func searchSuggestions(_ part: String) async throws -> [String] {
+        struct Suggestions: Decodable { let suggestions: [String]? }
+        let result: Suggestions = try await get("search/suggest", query: ["part": part])
+        return result.suggestions ?? []
+    }
+
     // MARK: My Wave
 
     func waveTracks(after lastTrackID: String?) async throws -> StationBatch {
