@@ -40,11 +40,16 @@ struct WaveView: View {
     var body: some View {
         NavigationStack {
             ZStack {
+                Brand.ink.ignoresSafeArea()
+
                 CoverVisualizer(coverURI: player.current?.cover, ascii: ascii, isPlaying: player.isPlaying,
                                 active: heroVisible, accent: Theme.shared.accentRGB,
                                 effect: VisualizerEffect(rawValue: effectRaw) ?? .smoke,
                                 palette: Theme.shared.smokePalette)
                     .ignoresSafeArea()
+                    // Fully hidden once the feed covers the screen, so it can't peek out at the bottom.
+                    .opacity(heroVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: heroVisible)
 
                 // Soft scrim under the text column so labels read over the brightest glyphs.
                 RadialGradient(colors: [.black.opacity(0.62), .black.opacity(0)], center: UnitPoint(x: 0.5, y: 0.58),
@@ -75,14 +80,14 @@ struct WaveView: View {
 
                         HomeSections()
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            // Solid black under the whole feed, with a fade sitting just above it so the
+                            // visualizer melts into the feed instead of showing through a gap.
+                            .background(Brand.ink)
                             .background(alignment: .top) {
-                                // Fade from the tunnel into the black feed.
-                                VStack(spacing: 0) {
-                                    LinearGradient(colors: [.clear, Brand.ink], startPoint: .top, endPoint: .bottom)
-                                        .frame(height: 140)
-                                        .offset(y: -140)
-                                    Brand.ink
-                                }
+                                LinearGradient(colors: [.clear, Brand.ink], startPoint: .top, endPoint: .bottom)
+                                    .frame(height: 140)
+                                    .offset(y: -140)
+                                    .allowsHitTesting(false)
                             }
                     }
                 }
