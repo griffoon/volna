@@ -68,6 +68,9 @@ final class PlayerEngine {
     private var pausedAt: Date?
     private var retriedTrackID: FlexibleID?
     private var consecutiveFailures = 0
+    private var restoredPending = false
+    private var lastRemembered = Date.distantPast
+    private static let rememberEvery: TimeInterval = 10
 
     private static let logLength = 6
     /// After this long on pause the stream link is assumed dead and refetched on resume.
@@ -177,8 +180,29 @@ final class PlayerEngine {
 
     func attach(_ client: YMClient?) {
         self.client = client
-        if client == nil { stop() }
+        if client == nil { stop(); PlaybackMemory.clear() }
         StreamResolver.clearCache()
+        if client != nil, queue.isEmpty { restore() }
+    }
+
+    // MARK: Remembering where we stopped
+
+    /// Puts back the last queue and position, paused; Play continues from there.
+    private func restore() {
+        guard let saved = PlaybackMemory.load(), saved.tracks.indices.contains(saved.index) else { return }
+        source = .list
+        queue = saved.tracks
+        index = saved.index
+        elapsed = saved.position
+        duration = Double(current?.durationMs ?? 0) / 1000
+        restoredPending = true
+        updateNowPlaying()
+    }
+
+    private func remember() {
+        guard !queue.isEmpty else { return }
+        PlaybackMemory.save(tracks: queue, index: index, position: elapsed)
+        lastRemembered = Date()
     }
 
     // MARK: Starting playback
@@ -285,6 +309,10 @@ final class PlayerEngine {
 
     func togglePlay() {
         guard current != nil else { return }
+        if restoredPending {
+            restoredPending = false
+            return loadCurrent(resumeAt: elapsed, freshListen: true)
+        }
         if !isPlaying, let pausedAt, Date().timeIntervalSince(pausedAt) > Self.staleAfter {
             // Stream links expire; after a long pause fetch a fresh one and continue from here.
             return loadCurrent(resumeAt: elapsed)
@@ -292,6 +320,7 @@ final class PlayerEngine {
         if isPlaying { activePlayer.pause() } else { activePlayer.play() }
         isPlaying.toggle()
         updateNowPlaying()
+        if !isPlaying { remember() }
     }
 
     func next() {
@@ -406,8 +435,9 @@ final class PlayerEngine {
 
     // MARK: Loading
 
-    private func loadCurrent(resumeAt resume: Double? = nil) {
+    private func loadCurrent(resumeAt resume: Double? = nil, freshListen: Bool = false) {
         guard let track = current else { return }
+        restoredPending = false
         if resume == nil { retriedTrackID = nil }
         loadTask?.cancel()
         fadeTask?.cancel()
@@ -438,7 +468,7 @@ final class PlayerEngine {
                 stream = source
                 activePlayer.replaceCurrentItem(with: Self.makeItem(source.url))
                 if let resume { await activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600)) }
-                startActive(resumed: resume != nil)
+                startActive(resumed: resume != nil && !freshListen)
             } catch {
                 guard !Task.isCancelled else { return }
                 skipUnplayable(track, reason: WaveSession.describe(error))
@@ -457,6 +487,7 @@ final class PlayerEngine {
             wave?.started(track)
             beginListen(track)
         }
+        remember()
         if isWave, queue.count - index <= Self.waveRefillThreshold {
             refillWave(thenAdvance: false)
         }
@@ -588,6 +619,7 @@ final class PlayerEngine {
     private func tick(_ time: CMTime) {
         elapsed = time.seconds.isFinite ? time.seconds : 0
         if elapsed > 2 { consecutiveFailures = 0 }
+        if Date().timeIntervalSince(lastRemembered) > Self.rememberEvery { remember() }
         if let itemDuration = activePlayer.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
             duration = itemDuration
         }
