@@ -109,6 +109,9 @@ struct NowPlayingView: View {
                         titleRow
                     }
                     LyricsView(lyrics: lyrics.lyrics, writers: lyrics.writers, source: lyrics.source)
+                        // The page is locked while lyrics are open, and scrollDisabled is inherited:
+                        // switch it back on for the lyrics themselves.
+                        .scrollDisabled(false)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 } else {
                     Spacer(minLength: 0)
@@ -220,7 +223,7 @@ struct NowPlayingView: View {
             .accessibilityLabel(player.isShuffled ? "Выключить перемешивание" : "Перемешать")
             Spacer()
             Button { Haptics.step(); player.previous() } label: {
-                Image(systemName: "backward.fill").frame(width: 64, height: 64)
+                RoundGlassLabel(symbol: "backward.fill", size: 64, iconSize: 21)
             }
             .accessibilityLabel("Назад")
             Spacer()
@@ -242,7 +245,7 @@ struct NowPlayingView: View {
             .accessibilityLabel(player.isPlaying ? "Пауза" : "Играть")
             Spacer()
             Button { Haptics.step(); player.next() } label: {
-                Image(systemName: "forward.fill").frame(width: 64, height: 64)
+                RoundGlassLabel(symbol: "forward.fill", size: 64, iconSize: 21)
             }
             .accessibilityLabel("Дальше")
             Spacer()

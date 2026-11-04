@@ -42,5 +42,18 @@ struct HorizontalPan: UIGestureRecognizerRepresentable {
             let v = pan.velocity(in: pan.view)
             return abs(v.x) > abs(v.y) * 1.2
         }
+
+        /// Other drags under the finger (the sheet's pull-to-close, page scrolling) wait until this
+        /// one has decided. A sideways swipe then never also closes the player; a vertical one makes
+        /// this fail at once, so they start without delay.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            other is UIPanGestureRecognizer && other !== recognizer
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            false
+        }
     }
 }

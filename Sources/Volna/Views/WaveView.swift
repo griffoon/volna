@@ -15,7 +15,7 @@ struct WaveView: View {
     @State private var showLog = false
     /// The wave last played on any device, offered when it differs from plain My Wave.
     @State private var lastWave: YMClient.LastWave?
-    private static let topID = "waveTop"
+    @State private var scroll = ScrollPosition(edge: .top)
 
     private var scrollHint: some View {
         VStack(spacing: 2) {
@@ -65,26 +65,30 @@ struct WaveView: View {
                     // The smoke is meant to glow behind the title, so it gets no scrim.
                     .opacity(effectRaw == VisualizerEffect.smoke.rawValue ? 0 : 1)
 
-                ScrollViewReader { proxy in
+                GeometryReader { geo in
+                // The hero fills the whole screen, edge to edge: its content sits between the top
+                // bar and the mini player / tab bar, and the feed starts below the bottom edge, so
+                // nothing of it shows behind the bars until you scroll.
+                let top = geo.safeAreaInsets.top
+                let bottom = geo.safeAreaInsets.bottom
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(spacing: 0) {
                             hud
-                            Spacer()
-                            center
-                            Spacer()
+                            Spacer(minLength: 8)
+                            center(available: geo.size.height)
+                            Spacer(minLength: 8)
                             scrollHint
                         }
                         .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 70)
-                        .containerRelativeFrame(.vertical)
+                        .padding(.top, top + 4)
+                        .padding(.bottom, bottom + 6)
+                        .frame(height: geo.size.height + top + bottom)
                         .contentShape(.rect)
-                        .id(Self.topID)
-                        .onLongPressGesture(minimumDuration: 0.45) {
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in
                             ascii.toggle(); Haptics.thump()
                             flash(ascii ? "> terminal mode: on" : "> terminal mode: off")
-                        }
+                        })
 
                         HomeSections()
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -100,6 +104,8 @@ struct WaveView: View {
                     }
                 }
                 .scrollIndicators(.hidden)
+                .ignoresSafeArea()
+                .scrollPosition($scroll)
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     geo.contentOffset.y + geo.contentInsets.top < geo.containerSize.height * 0.85
                 } action: { _, visible in
@@ -107,7 +113,7 @@ struct WaveView: View {
                 }
                 .onChange(of: router.waveScrollToTop) {
                     Haptics.tick()
-                    withAnimation(.spring(duration: 0.5, bounce: 0.15)) { proxy.scrollTo(Self.topID, anchor: .top) }
+                    withAnimation(.spring(duration: 0.5, bounce: 0.15)) { scroll.scrollTo(edge: .top) }
                 }
                 }
 
@@ -137,11 +143,6 @@ struct WaveView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Настройки волны", systemImage: "slider.horizontal.3") {
-                        router.destination = .waveSettings
-                    }
-                }
                 ToolbarItem(placement: .principal) {
                     Text("волна").font(Brand.display(17)).foregroundStyle(.white)
                 }
@@ -219,27 +220,28 @@ struct WaveView: View {
         }
     }
 
-    /// Previous · play · next, with the acid play button in the middle.
+    /// Previous · play · next. Previous and next wear the same outlined rings as like/dislike
+    /// above them, so the whole control block reads as one set around the acid play button.
     private var transport: some View {
-        HStack(spacing: 34) {
+        HStack(spacing: 26) {
             if hasTrack {
                 Button { Haptics.step(); player.goBack() } label: {
-                    Image(systemName: "backward.end.fill").font(.system(size: 24, weight: .bold))
+                    RoundGlassLabel(symbol: "backward.fill", tint: .white, size: 58, iconSize: 19)
                 }
                 .accessibilityLabel("Предыдущий трек")
                 .disabled(player.previousTrack == nil)
+                .opacity(player.previousTrack == nil ? 0.4 : 1)
             }
             PlayPulseButton(isPlaying: hasTrack && player.isPlaying, isLoading: player.isLoading) {
                 if hasTrack { Haptics.thump(); player.togglePlay() } else { Haptics.launch(); player.startWave() }
             }
             if hasTrack {
                 Button { Haptics.step(); player.next() } label: {
-                    Image(systemName: "forward.end.fill").font(.system(size: 24, weight: .bold))
+                    RoundGlassLabel(symbol: "forward.fill", tint: .white, size: 58, iconSize: 19)
                 }
                 .accessibilityLabel("Следующий трек")
             }
         }
-        .foregroundStyle(.white.opacity(0.85))
         .buttonStyle(.plain)
     }
 
@@ -249,15 +251,18 @@ struct WaveView: View {
         return artist
     }
 
-    private var center: some View {
-        VStack(spacing: 18) {
+    /// `available` is the height between the top bar and the mini player; the cover shrinks on
+    /// shorter screens so everything fits without overlapping the bars.
+    private func center(available: CGFloat) -> some View {
+        let cover = min(max(available * 0.3, 150), 240)
+        return VStack(spacing: 14) {
             Button {
                 guard hasTrack, let artist = player.current?.artists.first else { return }
                 Haptics.tap()
                 router.destination = .artist(id: artist.id.value, name: artist.name)
             } label: {
                 Text(headline)
-                    .font(Brand.display(52))
+                    .font(Brand.display(available < 640 ? 42 : 50))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.4)
@@ -265,6 +270,9 @@ struct WaveView: View {
                     .shadow(color: .black.opacity(0.5), radius: 18)
                     .contentTransition(.opacity)
                     .animation(.easeInOut(duration: 0.35), value: headline)
+                    // The whole line is the target, not just the glyphs.
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .accessibilityHint(hasTrack ? "Открыть исполнителя" : "")
@@ -272,7 +280,7 @@ struct WaveView: View {
             if let track = player.current, hasTrack {
                 // Same card as in the player: swipe sideways anywhere on this row (beside the cover
                 // too) to switch; vertical drags scroll the page.
-                CoverDeck(cardSize: 230)
+                CoverDeck(cardSize: cover)
                     .frame(maxWidth: .infinity)
                     .overlay(alignment: .bottom) {
                         ClipBadge(track: track).offset(y: 14)
@@ -282,23 +290,6 @@ struct WaveView: View {
             }
 
             transport
-
-            if hasTrack, !isMyWave {
-                Button {
-                    Haptics.launch()
-                    player.startWave()
-                    flash("> моя волна")
-                } label: {
-                    Label(isWave ? "сбросить на мою волну" : "включить мою волну", systemImage: "dot.radiowaves.left.and.right")
-                        .font(Brand.mono(12, weight: .bold))
-                        .foregroundStyle(Brand.acid)
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                        .background(.black.opacity(0.6), in: .capsule)
-                        .overlay(Capsule().stroke(Brand.acid.opacity(0.6), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            }
 
             if !player.isPlaying, let device = Ynison.shared.snapshot.activeDevice,
                !Ynison.shared.snapshot.paused, let other = Ynison.shared.snapshot.current {
@@ -334,36 +325,66 @@ struct WaveView: View {
                 .buttonStyle(.plain)
             }
 
-            if !characters.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    chipRow
-                    ScrollView(.horizontal) { chipRow.padding(.horizontal, 2) }
-                        .scrollIndicators(.hidden)
-                }
+            ViewThatFits(in: .horizontal) {
+                chipRow
+                ScrollView(.horizontal) { chipRow.padding(.horizontal, 2) }
+                    .scrollIndicators(.hidden)
             }
         }
     }
 
+    /// Everything about the wave in one row: back to My Wave (when something else plays),
+    /// the character quick-picks, and the full wave settings at the end.
     private var chipRow: some View {
-                HStack(spacing: 6) {
-                    ForEach(characters, id: \.self) { option in
-                        let selected = option.serializedSeed.map(characterSeeds.contains) ?? characterSeeds.isEmpty
-                        Button {
-                            Haptics.tick(); pick(option)
-                        } label: {
-                            Text(option.name.lowercased())
-                                .font(Brand.mono(11, weight: selected ? .bold : .medium))
-                                .lineLimit(1)
-                                .fixedSize()
-                                .padding(.horizontal, 10)
-                                .frame(height: 32)
-                                .foregroundStyle(selected ? Brand.acid : .white)
-                                .background(.black.opacity(0.8), in: .capsule)
-                                .overlay(Capsule().stroke(selected ? Brand.acid : .white.opacity(0.25), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                    }
+        HStack(spacing: 6) {
+            if hasTrack, !isMyWave {
+                Button {
+                    Haptics.launch()
+                    player.startWave()
+                    flash("> моя волна")
+                } label: {
+                    Label(isWave ? "моя волна" : "в волну", systemImage: "dot.radiowaves.left.and.right")
+                        .font(Brand.mono(11, weight: .heavy))
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .foregroundStyle(Brand.ink)
+                        .background(Brand.acid, in: .capsule)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isWave ? "Сбросить на Мою волну" : "Включить Мою волну")
+            }
+            ForEach(characters, id: \.self) { option in
+                let selected = option.serializedSeed.map(characterSeeds.contains) ?? characterSeeds.isEmpty
+                Button {
+                    Haptics.tick(); pick(option)
+                } label: {
+                    Text(option.name.lowercased())
+                        .font(Brand.mono(11, weight: selected ? .bold : .medium))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .foregroundStyle(selected ? Brand.acid : .white)
+                        .background(.black.opacity(0.8), in: .capsule)
+                        .overlay(Capsule().stroke(selected ? Brand.acid : .white.opacity(0.25), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                Haptics.tap()
+                router.destination = .waveSettings
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 32)
+                    .background(.black.opacity(0.8), in: .capsule)
+                    .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Настройки Моей волны")
+        }
     }
 
     // MARK: Character chips (server-provided "diversity" options)
@@ -429,15 +450,17 @@ private struct AnalyzerReadout: View {
     private static func hit(_ value: Float) -> String { value > 0.3 ? "◆" : "◇" }
 }
 
-private struct RoundGlassLabel: View {
+struct RoundGlassLabel: View {
     let symbol: String
     var tint: Color = .white
+    var size: CGFloat = 50
+    var iconSize: CGFloat = 18
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 18, weight: .semibold))
+            .font(.system(size: iconSize, weight: .semibold))
             .foregroundStyle(tint)
-            .frame(width: 50, height: 50)
+            .frame(width: size, height: size)
             .background(.black.opacity(0.45), in: .circle)
             .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
     }
