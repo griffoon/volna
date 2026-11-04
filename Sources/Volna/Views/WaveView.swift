@@ -16,6 +16,12 @@ struct WaveView: View {
     /// The wave last played on any device, offered when it differs from plain My Wave.
     @State private var lastWave: YMClient.LastWave?
     @State private var scroll = ScrollPosition(edge: .top)
+    /// The feed below the hero shows only once you've started scrolling.
+    @State private var feedShown = false
+
+    private static let miniPlayerHeight: CGFloat = 62
+    /// From the very top of the screen: just below the Dynamic Island, inside the status bar.
+    private static let islandLabelTop: CGFloat = 49
 
     private var scrollHint: some View {
         VStack(spacing: 2) {
@@ -70,28 +76,33 @@ struct WaveView: View {
                 // bar and the mini player / tab bar, and the feed starts below the bottom edge, so
                 // nothing of it shows behind the bars until you scroll.
                 let top = geo.safeAreaInsets.top
-                let bottom = geo.safeAreaInsets.bottom
+                // The mini player floats above the tab bar but isn't part of the safe area here,
+                // so its height is added by hand while something is loaded.
+                let bottom = geo.safeAreaInsets.bottom + (hasTrack ? Self.miniPlayerHeight : 0)
+                let available = geo.size.height - (hasTrack ? Self.miniPlayerHeight : 0)
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(spacing: 0) {
                             hud
                             Spacer(minLength: 8)
-                            center(available: geo.size.height)
+                            center(available: available)
                             Spacer(minLength: 8)
                             scrollHint
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, top + 4)
-                        .padding(.bottom, bottom + 6)
-                        .frame(height: geo.size.height + top + bottom)
-                        .contentShape(.rect)
-                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in
-                            ascii.toggle(); Haptics.thump()
-                            flash(ascii ? "> terminal mode: on" : "> terminal mode: off")
-                        })
+                        .padding(.bottom, 6)
+                        // Ends right at the top of the mini player: the feed follows straight after
+                        // «подборки», with no empty screen in between.
+                        .frame(height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom - bottom)
 
                         HomeSections()
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            // Tucked away (behind the bars) while the screen sits at the top, slides
+                            // up into view as soon as you start scrolling towards it.
+                            .opacity(feedShown ? 1 : 0)
+                            .offset(y: feedShown ? 0 : 40)
+                            .animation(.spring(duration: 0.45, bounce: 0.15), value: feedShown)
                             // Solid black under the whole feed, with a fade sitting just above it so the
                             // visualizer melts into the feed instead of showing through a gap.
                             .background(Brand.ink)
@@ -112,6 +123,11 @@ struct WaveView: View {
                     geo.contentOffset.y + geo.contentInsets.top < geo.containerSize.height * 0.85
                 } action: { _, visible in
                     heroVisible = visible
+                }
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.contentInsets.top > 12
+                } action: { _, scrolled in
+                    feedShown = scrolled
                 }
                 .onChange(of: router.waveScrollToTop) {
                     Haptics.tick()
@@ -144,9 +160,31 @@ struct WaveView: View {
                         .transition(.opacity)
                 }
             }
+            // The screen's name lives up in the status bar, right under the Dynamic Island.
+            .overlay {
+                VStack {
+                    Text("волна")
+                        .font(Brand.display(12))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.top, Self.islandLabelTop)
+                    Spacer()
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("волна").font(Brand.display(17)).foregroundStyle(.white)
+                // My Wave lives top-left: start it, and tune it right next to it.
+                ToolbarItemGroup(placement: .topBarLeading) {
+                    Button("Моя волна", systemImage: "dot.radiowaves.left.and.right") {
+                        Haptics.launch()
+                        player.startWave()
+                        flash("> моя волна")
+                    }
+                    .tint(isMyWave ? Brand.acid : .white)
+                    Button("Настроить волну", systemImage: "dial.medium") {
+                        Haptics.tap()
+                        router.destination = .waveSettings
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Устройства", systemImage: Ynison.shared.snapshot.devices.isEmpty ? "hifispeaker" : "hifispeaker.2.fill") {
@@ -252,7 +290,7 @@ struct WaveView: View {
     /// `available` is the height between the top bar and the mini player; the cover shrinks on
     /// shorter screens so everything fits without overlapping the bars.
     private func center(available: CGFloat) -> some View {
-        let cover = min(max(available * 0.27, 140), 236)
+        let cover = min(max(available * 0.34, 160), 280)
         return VStack(spacing: 14) {
             Button {
                 guard hasTrack, let artist = player.current?.artists.first else { return }
@@ -323,36 +361,22 @@ struct WaveView: View {
                 .buttonStyle(.plain)
             }
 
-            ViewThatFits(in: .horizontal) {
-                chipRow
-                ScrollView(.horizontal) { chipRow.padding(.horizontal, 2) }
-                    .scrollIndicators(.hidden)
+            // The character quick-picks only matter while My Wave itself plays; otherwise the
+            // top-left buttons start and tune it.
+            if hasTrack, isMyWave, !characters.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    chipRow
+                    ScrollView(.horizontal) { chipRow.padding(.horizontal, 2) }
+                        .scrollIndicators(.hidden)
+                }
+                .transition(.opacity)
             }
-            tuneButton
         }
     }
 
-    /// Everything about the wave in one row: back to My Wave (when something else plays),
-    /// the character quick-picks, and the full wave settings at the end.
+    /// Character quick-picks for My Wave (server-provided "diversity" options).
     private var chipRow: some View {
         HStack(spacing: 6) {
-            if hasTrack, !isMyWave {
-                Button {
-                    Haptics.launch()
-                    player.startWave()
-                    flash("> моя волна")
-                } label: {
-                    Label(isWave ? "моя волна" : "в волну", systemImage: "dot.radiowaves.left.and.right")
-                        .font(Brand.mono(11, weight: .heavy))
-                        .fixedSize()
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .foregroundStyle(Brand.ink)
-                        .background(Brand.acid, in: .capsule)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isWave ? "Сбросить на Мою волну" : "Включить Мою волну")
-            }
             ForEach(characters, id: \.self) { option in
                 let selected = option.serializedSeed.map(characterSeeds.contains) ?? characterSeeds.isEmpty
                 Button {
@@ -371,30 +395,6 @@ struct WaveView: View {
                 .buttonStyle(.plain)
             }
         }
-    }
-
-    /// The way into My Wave settings: a lit glass capsule, impossible to miss, right above the
-    /// quick-pick chips it belongs with.
-    private var tuneButton: some View {
-        Button {
-            Haptics.tap()
-            router.destination = .waveSettings
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "dial.medium.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .symbolEffect(.wiggle, options: .repeat(.periodic(delay: 6)))
-                Text("настроить волну")
-                    .font(Brand.mono(13, weight: .heavy))
-            }
-            .foregroundStyle(Brand.acid)
-            .padding(.horizontal, 18)
-            .frame(height: 42)
-            .glassEffect(.regular.tint(Brand.acid.opacity(0.18)).interactive(), in: .capsule)
-            .overlay(Capsule().stroke(Brand.acid.opacity(0.55), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Настройки Моей волны")
     }
 
     // MARK: Character chips (server-provided "diversity" options)
@@ -472,7 +472,8 @@ struct RoundGlassLabel: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(.circle)
-            .glassEffect(.regular.interactive(), in: .circle)
+            .background(.black.opacity(0.28), in: .circle)
+            .glassEffect(.clear.interactive(), in: .circle)
     }
 }
 

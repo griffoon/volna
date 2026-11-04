@@ -27,7 +27,7 @@ struct LibraryView: View {
 
                     if !session.pins.isEmpty || !session.presaves.isEmpty { tokens }
 
-                    cdShelf
+                    playlistGrid
 
                     NavigationLink { HistoryView() } label: {
                         HStack(spacing: 10) {
@@ -89,21 +89,22 @@ struct LibraryView: View {
         return parts.joined(separator: " | ")
     }
 
-    // MARK: Pins and presaves as round tokens
+    // MARK: Pins and presaves as CDs
 
     private var tokens: some View {
         VStack(alignment: .leading, spacing: 10) {
             TerminalLabel(text: "под рукой").padding(.horizontal, 20)
             ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) {
+                LazyHStack(alignment: .top, spacing: 18) {
                     ForEach(session.presaves) { album in
                         NavigationLink { AlbumView(album: album) } label: {
-                            Token(cover: album.coverUri, title: album.title,
-                                  badge: album.releaseDay.map { $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "ru_RU"))) },
-                                  round: false)
+                            CDJewel(cover: album.coverUri, title: album.title, badge: "calendar",
+                                    caption: album.releaseDay.map {
+                                        $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "ru_RU")))
+                                    })
                         }
                     }
-                    ForEach(session.pins) { PinnedLink(pin: $0) }
+                    ForEach(session.pins) { PinnedLink(pin: $0, asCD: true) }
                 }
                 .padding(.horizontal, 20)
             }
@@ -112,46 +113,29 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: Playlists as a shelf of CDs
+    // MARK: Playlists
 
-    private var cdShelf: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                TerminalLabel(text: "плейлисты | \(playlists.count)")
-                Spacer()
-                Text("листай →")
-                    .font(Brand.mono(11))
-                    .foregroundStyle(.white.opacity(0.4))
-            }
-            .padding(.horizontal, 20)
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 0) {
-                    ForEach(Array(playlists.enumerated()), id: \.element.id) { number, playlist in
-                        NavigationLink { PlaylistView(playlist: playlist) } label: {
-                            CDCase(cover: playlist.coverURI, title: playlist.title,
-                                   caption: playlist.trackCount.map { "[\($0) трк]" }, number: number + 1)
-                        }
-                        .buttonStyle(.plain)
-                        .shelfTilt()
+    private var playlistGrid: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            TerminalLabel(text: "плейлисты | \(playlists.count)").padding(.horizontal, 20)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+                      alignment: .leading, spacing: 22) {
+                ForEach(playlists) { playlist in
+                    NavigationLink { PlaylistView(playlist: playlist) } label: {
+                        PlaylistStack(cover: playlist.coverURI, title: playlist.title, count: playlist.trackCount)
                     }
-                    Button {
-                        Haptics.tap()
-                        newPlaylistTitle = ""
-                        creating = true
-                    } label: {
-                        CDCase(cover: nil, title: "новый плейлист", caption: "+ записать болванку",
-                               number: playlists.count + 1, isBlank: true)
-                    }
-                    .buttonStyle(.plain)
-                    .shelfTilt()
+                    .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
                 }
-                .scrollTargetLayout()
+                Button {
+                    Haptics.tap()
+                    newPlaylistTitle = ""
+                    creating = true
+                } label: {
+                    PlaylistStack(cover: nil, title: "новый плейлист", count: nil, isNew: true)
+                }
             }
-            .scrollTargetBehavior(.viewAligned)
-            .contentMargins(.horizontal, 40, for: .scrollContent)
-            .scrollIndicators(.hidden)
-            .frame(height: 256)
-            .onScrollTargetVisibilityChange(idType: Playlist.ID.self, threshold: 0.9) { _ in Haptics.tick() }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
         }
     }
 
@@ -233,6 +217,8 @@ private struct LikedWall: View {
                         .foregroundStyle(Brand.acid)
                     Text(count > 0 ? count.formatted(.number.grouping(.never)) : "----")
                         .font(Brand.display(60))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.4)
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
                     Text("треков")
@@ -302,177 +288,162 @@ private struct LikedWall: View {
     }
 }
 
-/// A playlist as a CD in its jewel case: clear plastic with a spine and a glare over the cover.
-/// When the case reaches the middle of the shelf, the disc slides out of it: a burned CD-R with
-/// the cover printed on it, a rainbow-silver rim and a marker label like `MIX_007.ISO`.
-private struct CDCase: View {
+/// A playlist as a playlist: its cover on top of a stack of sheets (the tracks under it),
+/// the title and how many tracks are in it.
+private struct PlaylistStack: View {
     let cover: String?
     let title: String
-    let caption: String?
-    /// Position on the shelf, for the disc's label.
-    let number: Int
-    var isBlank = false
-
-    private static let caseSide: CGFloat = 186
-    private static let disc: CGFloat = 176
-    /// How far the disc slides out when the case is centred.
-    private static let slide: CGFloat = 58
+    let count: Int?
+    var isNew = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .leading) {
-                disc
-                    .padding(.leading, 6)
-                    .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                        let centred = 1 - min(abs(phase.value), 1)
-                        return content
-                            .offset(x: centred * Self.slide)
-                            .rotationEffect(.degrees(centred * 70))
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                // The sheets underneath, each a little lower and narrower.
+                ForEach((1...2).reversed(), id: \.self) { depth in
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.white.opacity(0.05 + 0.03 * Double(3 - depth)))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.14), lineWidth: 1))
+                        .padding(.horizontal, CGFloat(depth) * 7)
+                        .offset(y: CGFloat(depth) * 7)
+                }
+                Group {
+                    if isNew {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 4).fill(Brand.ink)
+                            Image(systemName: "plus").font(.system(size: 34, weight: .light)).foregroundStyle(Brand.acid)
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 4)
+                            .stroke(Brand.acid.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+                    } else {
+                        CoverImage(uri: cover, size: 400, corner: 4)
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.12), lineWidth: 1))
                     }
+                }
+                .aspectRatio(1, contentMode: .fit)
+            }
+            .padding(.bottom, 14)
+            HStack(spacing: 6) {
+                Image(systemName: isNew ? "plus" : "music.note.list")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Brand.acid)
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            Text(count.map { "\($0) трк" } ?? (isNew ? "создать" : " "))
+                .font(Brand.mono(11))
+                .foregroundStyle(.white.opacity(0.45))
+        }
+    }
+}
+
+/// A CD in a clear jewel case: the cover is the paper insert seen through the plastic, the case
+/// has a hinged spine and a glare, and the disc sticks out of the side showing its rainbow data
+/// side, so it reads as a CD at a glance.
+struct CDJewel: View {
+    let cover: String?
+    let title: String
+    /// SF Symbol in the corner (pinned, presave…).
+    var badge: String?
+    var caption: String?
+
+    private static let side: CGFloat = 112
+    private static let disc: CGFloat = 104
+    /// How much of the disc shows beside the case.
+    private static let peek: CGFloat = 38
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .leading) {
+                CDDisc(size: Self.disc)
+                    .offset(x: Self.side - Self.disc / 2 - 14 + Self.peek / 2)
+                    .rotationEffect(.degrees(-8))
                 jewelCase
             }
-            .frame(width: Self.caseSide + Self.slide, height: Self.caseSide, alignment: .leading)
+            .frame(width: Self.side + Self.peek, height: Self.side, alignment: .leading)
             Text(title)
-                .font(Brand.display(16))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
-                .frame(width: Self.caseSide, alignment: .leading)
+                .frame(width: Self.side, alignment: .leading)
             if let caption {
                 Text(caption)
-                    .font(Brand.mono(11, weight: .bold))
-                    .foregroundStyle(isBlank ? Brand.acid : .white.opacity(0.45))
+                    .font(Brand.mono(10, weight: .bold))
+                    .foregroundStyle(Brand.acid)
             }
         }
-        .padding(.horizontal, 6)
     }
-
-    private var label: String {
-        isBlank ? "BLANK CD-R" : String(format: "MIX_%03d.ISO", number)
-    }
-
-    // MARK: The disc
-
-    private var disc: some View {
-        let d = Self.disc
-        return ZStack {
-            // Data side: silver with a faint rainbow sheen.
-            Circle().fill(AngularGradient(colors: [
-                Color(white: 0.78), Color(red: 0.75, green: 0.85, blue: 0.95), Color(white: 0.9),
-                Color(red: 0.95, green: 0.8, blue: 0.9), Color(white: 0.7), Color(red: 0.85, green: 0.95, blue: 0.8),
-                Color(white: 0.78),
-            ], center: .center))
-            // Printed face: the cover (or bare CD-R green-gold), leaving the rim visible.
-            Group {
-                if isBlank {
-                    Circle().fill(LinearGradient(colors: [Color(red: 0.55, green: 0.6, blue: 0.35), Color(red: 0.3, green: 0.35, blue: 0.2)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
-                } else {
-                    CoverImage(uri: cover, size: 400, corner: 0)
-                        .clipShape(.circle)
-                }
-            }
-            .frame(width: d - 10, height: d - 10)
-            // Marker label across the lower half, the way burned discs get signed.
-            Text(label)
-                .font(Brand.mono(11, weight: .heavy))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(.black.opacity(0.75), in: .rect(cornerRadius: 2))
-                .offset(y: d * 0.27)
-            // Clear hub ring and the hole.
-            Circle().stroke(.white.opacity(0.55), lineWidth: 7).frame(width: d * 0.3, height: d * 0.3)
-            Circle().fill(Brand.ink).frame(width: d * 0.1, height: d * 0.1)
-                .overlay(Circle().stroke(.white.opacity(0.4), lineWidth: 1))
-        }
-        .frame(width: d, height: d)
-        .shadow(color: .black.opacity(0.6), radius: 8, x: 4)
-    }
-
-    // MARK: The case
 
     private var jewelCase: some View {
-        let side = Self.caseSide
-        return ZStack(alignment: .leading) {
-            Group {
-                if isBlank {
-                    ZStack {
-                        Rectangle().fill(.white.opacity(0.04))
-                        VStack(spacing: 6) {
-                            Image(systemName: "plus").font(.system(size: 34, weight: .light))
-                            Text("записать").font(Brand.mono(11, weight: .bold))
-                        }
-                        .foregroundStyle(Brand.acid)
-                    }
-                } else {
-                    CoverImage(uri: cover, size: 600, corner: 0)
+        let side = Self.side
+        return ZStack(alignment: .topLeading) {
+            // Clear plastic body.
+            Rectangle().fill(.white.opacity(0.06))
+            // The insert, set in from the edges so the plastic frame shows around it.
+            CoverImage(uri: cover, size: 300, corner: 0)
+                .frame(width: side - 16, height: side - 8)
+                .offset(x: 12, y: 4)
+            // Spine: darker plastic with hinge ridges.
+            VStack(spacing: 4) {
+                ForEach(0..<14, id: \.self) { _ in
+                    Rectangle().fill(.white.opacity(0.22)).frame(width: 4, height: 1)
                 }
             }
-            .frame(width: side - 12, height: side)
-            .padding(.leading, 12)
-            // Spine with the hinge ridges.
-            VStack(spacing: 5) {
-                ForEach(0..<16, id: \.self) { _ in
-                    Rectangle().fill(.white.opacity(0.12)).frame(width: 6, height: 1)
-                }
-            }
-            .frame(width: 12, height: side)
-            .background(LinearGradient(colors: [Color(white: 0.16), Color(white: 0.06)], startPoint: .leading, endPoint: .trailing))
-            // Plastic glare and edge.
+            .frame(width: 9, height: side)
+            .background(.white.opacity(0.1))
+            // Glare across the lid and a bright rim.
             LinearGradient(stops: [
                 .init(color: .white.opacity(0.0), location: 0.0),
-                .init(color: .white.opacity(0.16), location: 0.38),
-                .init(color: .white.opacity(0.03), location: 0.52),
+                .init(color: .white.opacity(0.28), location: 0.32),
+                .init(color: .white.opacity(0.04), location: 0.46),
                 .init(color: .white.opacity(0.0), location: 1),
             ], startPoint: .topLeading, endPoint: .bottomTrailing)
             .allowsHitTesting(false)
         }
         .frame(width: side, height: side)
-        .overlay(Rectangle().stroke(.white.opacity(isBlank ? 0 : 0.28), lineWidth: 1))
-        .overlay(Rectangle().stroke(Brand.acid.opacity(isBlank ? 0.7 : 0), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
-        .shadow(color: .black.opacity(0.75), radius: 16, y: 10)
+        .overlay(Rectangle().stroke(.white.opacity(0.45), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            if let badge {
+                Image(systemName: badge)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Brand.ink)
+                    .padding(4)
+                    .background(Brand.acid, in: .circle)
+                    .padding(5)
+            }
+        }
+        .shadow(color: .black.opacity(0.7), radius: 10, y: 6)
     }
 }
 
-/// Small round (artist) or square (release) token with a caption, for pins and presaves.
-private struct Token: View {
-    let cover: String?
-    let title: String
-    let badge: String?
-    let round: Bool
+/// The disc itself, data side up: silver with rainbow interference rings, the clear hub and the hole.
+struct CDDisc: View {
+    let size: CGFloat
 
     var body: some View {
-        VStack(spacing: 6) {
-            CoverImage(uri: cover, size: 200, corner: round ? 40 : 3)
-                .frame(width: 80, height: 80)
-                .overlay(alignment: .bottom) {
-                    if let badge {
-                        Text(badge)
-                            .font(Brand.mono(10, weight: .heavy))
-                            .foregroundStyle(Brand.ink)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Brand.acid, in: .capsule)
-                            .offset(y: 8)
-                    }
-                }
-            Text(title)
-                .font(Brand.mono(11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
-                .frame(width: 88)
-                .padding(.top, badge == nil ? 0 : 6)
+        ZStack {
+            Circle().fill(AngularGradient(colors: [
+                Color(white: 0.82), Color(red: 0.62, green: 0.82, blue: 1.0), Color(red: 0.75, green: 1.0, blue: 0.75),
+                Color(white: 0.92), Color(red: 1.0, green: 0.72, blue: 0.85), Color(red: 1.0, green: 0.95, blue: 0.65),
+                Color(white: 0.78), Color(red: 0.62, green: 0.82, blue: 1.0), Color(white: 0.82),
+            ], center: .center, angle: .degrees(20)))
+            // Fine grooves.
+            ForEach(0..<7, id: \.self) { ring in
+                Circle()
+                    .stroke(.white.opacity(ring.isMultiple(of: 2) ? 0.25 : 0.1), lineWidth: 0.6)
+                    .padding(size * (0.06 + CGFloat(ring) * 0.045))
+            }
+            // Clear hub: a see-through ring around the hole.
+            Circle().fill(Color(white: 0.6).opacity(0.35)).frame(width: size * 0.34, height: size * 0.34)
+            Circle().stroke(.white.opacity(0.7), lineWidth: 1).frame(width: size * 0.34, height: size * 0.34)
+            Circle().fill(Brand.ink).frame(width: size * 0.12, height: size * 0.12)
+                .overlay(Circle().stroke(.white.opacity(0.5), lineWidth: 1))
         }
-    }
-}
-
-private extension View {
-    /// Cases turning away as they leave the middle of the shelf.
-    func shelfTilt() -> some View {
-        scrollTransition(.interactive, axis: .horizontal) { content, phase in
-            content
-                .rotation3DEffect(.degrees(phase.value * -38), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
-                .scaleEffect(1 - abs(phase.value) * 0.14)
-                .opacity(1 - abs(phase.value) * 0.45)
-        }
+        .frame(width: size, height: size)
+        .overlay(Circle().stroke(.white.opacity(0.6), lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 6, x: 3)
     }
 }
 

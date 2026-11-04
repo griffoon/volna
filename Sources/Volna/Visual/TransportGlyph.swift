@@ -65,7 +65,8 @@ struct GlassTransportButton: View {
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
                 .contentShape(.circle)
-                .glassEffect(.regular.interactive(), in: .circle)
+                .background(.black.opacity(0.28), in: .circle)
+                .glassEffect(.clear.interactive(), in: .circle)
         }
         .buttonStyle(.plain)
     }

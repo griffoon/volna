@@ -2,6 +2,7 @@ version: 1
 bundleID: com.griffoon.volna
 product: Volna
 infoPath: Info.plist
+iconPath: Resources/AppIcon.png
 extensions:
   - product: VolnaWidget
     infoPath: VolnaWidget-Info.plist

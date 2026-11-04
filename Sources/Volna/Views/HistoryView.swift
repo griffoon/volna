@@ -326,6 +326,8 @@ struct PinToggle: View {
 /// Opens a pinned item on its own page.
 struct PinnedLink: View {
     let pin: Pin
+    /// In the collection pins are drawn as CDs in jewel cases.
+    var asCD = false
 
     var body: some View {
         let data = pin.data
@@ -350,7 +352,16 @@ struct PinnedLink: View {
         }
     }
 
+    @ViewBuilder
     private var card: some View {
+        if asCD {
+            CDJewel(cover: pin.coverURI, title: pin.displayTitle, badge: "pin.fill")
+        } else {
+            plainCard
+        }
+    }
+
+    private var plainCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             CoverImage(uri: pin.coverURI, size: 300, corner: pin.kind == "artist" ? 60 : 3)
                 .frame(width: 104, height: 104)

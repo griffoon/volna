@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(HapticBass.offsetKey) private var hapticOffset = 0.0
     @AppStorage(KickBounce.storageKey) private var coverBounce = true
     @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
+    @AppStorage("tunnelASCII") private var terminalMode = true
     @Environment(PlayerEngine.self) private var player
 
     var body: some View {
@@ -56,8 +57,13 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.inline)
+                Toggle("Терминальный режим", isOn: $terminalMode)
+                    .tint(Brand.acid)
+                    .onChange(of: terminalMode) { Haptics.tick() }
             } header: {
                 Text("Визуализатор «Волны»")
+            } footer: {
+                Text("Терминальный режим рисует визуализатор двоичным кодом: вместо гладкой картинки — поле из нулей и единиц, которые светятся и пульсируют под музыку.")
             }
 
             Section {

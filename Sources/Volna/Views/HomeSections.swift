@@ -247,8 +247,12 @@ private struct PlaylistCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             CoverImage(uri: playlist.coverURI, size: 400)
+                // Monochrome in the accent colour: greys first, then tinted, lifted a bit so the
+                // lights land on the accent rather than on a muddy shade of it.
                 .grayscale(1)
-                .contrast(1.1)
+                .contrast(1.15)
+                .brightness(0.08)
+                .colorMultiply(Brand.acid)
                 .frame(width: 156, height: 156)
                 .overlay(alignment: .bottomLeading) {
                     Text(playlist.trackCount.map { "[\($0) трк]" } ?? "")
