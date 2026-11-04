@@ -39,7 +39,7 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .modifier(MiniPlayerAccessory(visible: player.current != nil) {
+        .modifier(MiniPlayerAccessory(visible: player.current != nil && !(tab == .wave && router.waveHeroFocused)) {
             MiniPlayer { showPlayer = true }
                 .matchedTransitionSource(id: "player", in: playerZoom)
         })
@@ -50,6 +50,11 @@ struct RootView: View {
         .sheet(item: Binding(get: { showPlayer ? nil : router.destination },
                              set: { router.destination = $0 })) { destination in
             DestinationView(destination: destination)
+        }
+        .onChange(of: router.playerRequested) { _, requested in
+            guard requested else { return }
+            router.playerRequested = false
+            if player.current != nil { showPlayer = true }
         }
         .onChange(of: router.destination?.id) { _, id in
             if id != nil { showPlayer = false }

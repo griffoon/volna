@@ -12,6 +12,8 @@ struct HomeSections: View {
     @State private var recent: [RecentContext] = []
     @State private var loaded = false
     @State private var loading = false
+    /// Titles of shelves the user folded away, one per line.
+    @AppStorage("homeCollapsed") private var collapsedRaw = ""
 
     /// How much of each feed to show before it turns into noise.
     private static let maxEvents = 4
@@ -106,29 +108,65 @@ struct HomeSections: View {
         .task { await load() }
     }
 
+    private var collapsed: Set<String> {
+        Set(collapsedRaw.split(separator: "\n").map(String.init))
+    }
+
+    private func toggleCollapsed(_ title: String) {
+        var set = collapsed
+        if set.contains(title) { set.remove(title) } else { set.insert(title) }
+        collapsedRaw = set.sorted().joined(separator: "\n")
+    }
+
+    /// Section title that folds its shelf away on tap, like a spoiler; remembered across launches.
+    private func header(_ title: String) -> some View {
+        let isCollapsed = collapsed.contains(title)
+        return Button {
+            Haptics.tick()
+            withAnimation(.snappy) { toggleCollapsed(title) }
+        } label: {
+            HStack(spacing: 8) {
+                TerminalLabel(text: title)
+                    .opacity(isCollapsed ? 0.5 : 1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+            }
+            .contentShape(.rect)
+        }
+        .accessibilityLabel(isCollapsed ? "Развернуть: \(title)" : "Свернуть: \(title)")
+    }
+
     private func shelf<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            TerminalLabel(text: title).padding(.horizontal, 20)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) { content() }
-                    .padding(.horizontal, 20)
-                    .scrollTargetLayout()
+            header(title).padding(.horizontal, 20)
+            if !collapsed.contains(title) {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 14) { content() }
+                        .padding(.horizontal, 20)
+                        .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
+                .scrollIndicators(.hidden)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollIndicators(.hidden)
         }
     }
 
     private func trackBlock(_ title: String, tracks: [Track], numbered: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            TerminalLabel(text: title)
-            ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
-                Button {
-                    player.play(tracks, startAt: offset)
-                } label: {
-                    TrackRow(track: track, number: numbered ? offset + 1 : nil)
+            header(title)
+            if !collapsed.contains(title) {
+                ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
+                    Button {
+                        player.play(tracks, startAt: offset)
+                    } label: {
+                        TrackRow(track: track, number: numbered ? offset + 1 : nil)
+                    }
+                    .contextMenu { TrackMenu(track: track) }
                 }
-                .contextMenu { TrackMenu(track: track) }
             }
         }
         .padding(.horizontal, 20)

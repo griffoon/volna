@@ -29,6 +29,9 @@ struct WaveView: View {
     }
 
     private var waveIsOn: Bool { player.isWave && player.current != nil }
+    private var isWave: Bool { player.isWave }
+    /// Plain My Wave (not a wave by a track, artist or album) is what's playing.
+    private var isMyWave: Bool { player.source == .wave(title: "Моя волна") }
     /// Any track loaded, from the wave or anywhere else: the screen shows it the same way.
     private var hasTrack: Bool { player.current != nil }
 
@@ -97,6 +100,14 @@ struct WaveView: View {
                 } action: { _, visible in
                     heroVisible = visible
                 }
+                // At the very top the screen is all wave: tab bar and mini player hide, and come
+                // back as soon as you scroll towards the feed.
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.contentInsets.top < 24
+                } action: { _, atTop in
+                    withAnimation(.snappy) { router.waveHeroFocused = atTop }
+                }
+                .onDisappear { router.waveHeroFocused = false }
 
                 if let problem = TunnelDiagnostics.shared.message {
                     Text("> metal: \(problem)")
@@ -123,6 +134,7 @@ struct WaveView: View {
                         .transition(.opacity)
                 }
             }
+            .toolbarVisibility(router.waveHeroFocused ? .hidden : .visible, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Настройки волны", systemImage: "slider.horizontal.3") {
@@ -192,18 +204,7 @@ struct WaveView: View {
                 Haptics.slam(); Task { await session.dislike(track) }
                 flash("> dislike: \(track.title.lowercased())")
             }
-            Menu {
-                TrackMenu(track: track)
-            } label: {
-                ScrambleText(text: track.fullTitle)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, 18)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(.black.opacity(0.45), in: .capsule)
-                    .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
-            }
+            ScrubPill(track: track) { router.playerRequested = true }
             RoundGlassButton(symbol: liked ? "heart.fill" : "heart", label: liked ? "Убрать из любимых" : "Нравится",
                              tint: liked ? Brand.acid : .white) {
                 liked ? Haptics.tap() : Haptics.success(); Task { await session.toggleLike(track) }
@@ -260,14 +261,32 @@ struct WaveView: View {
                 .animation(.easeInOut(duration: 0.35), value: headline)
 
             if let track = player.current, hasTrack {
-                // Same card as in the player: swipe sideways to switch, vertical drags scroll the page.
-                CoverDeck()
-                    .frame(width: 180, height: 180)
+                // Same card as in the player: swipe sideways anywhere on this row (beside the cover
+                // too) to switch; vertical drags scroll the page.
+                CoverDeck(cardSize: 230)
+                    .frame(maxWidth: .infinity)
                     .transition(.scale.combined(with: .opacity))
                 trackBar(track)
             }
 
             transport
+
+            if hasTrack, !isMyWave {
+                Button {
+                    Haptics.launch()
+                    player.startWave()
+                    flash("> моя волна")
+                } label: {
+                    Label(isWave ? "сбросить на мою волну" : "включить мою волну", systemImage: "dot.radiowaves.left.and.right")
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(Brand.acid)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(.black.opacity(0.6), in: .capsule)
+                        .overlay(Capsule().stroke(Brand.acid.opacity(0.6), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
 
             if !player.isPlaying, let device = Ynison.shared.snapshot.activeDevice,
                !Ynison.shared.snapshot.paused, let other = Ynison.shared.snapshot.current {
@@ -459,5 +478,92 @@ private struct PlayPulseButton: View {
                 if beat != lastBeat { lastBeat = beat; kickAt = context.date }
             }
         }
+    }
+}
+
+/// The track title pill doubles as a seek bar: its fill shows how far the track is, sliding
+/// a finger sideways scrubs (the title turns into the time), a tap opens the full player.
+private struct ScrubPill: View {
+    @Environment(PlayerEngine.self) private var player
+    let track: Track
+    let open: () -> Void
+    /// Fraction being scrubbed to; nil when not dragging.
+    @State private var scrub: Double?
+    @State private var startFraction: Double = 0
+    @State private var horizontal: Bool?
+
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation(minimumInterval: 1 / 15, paused: !player.isPlaying || scrub != nil)) { context in
+                let fraction = scrub ?? playedFraction(at: context.date)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.45))
+                    Rectangle()
+                        .fill(Brand.acid.opacity(scrub == nil ? 0.16 : 0.32))
+                        .frame(width: geo.size.width * fraction)
+                    Group {
+                        if let scrub {
+                            Text("\(Self.time(scrub * player.duration)) / \(Self.time(player.duration))")
+                                .font(Brand.mono(15, weight: .bold))
+                                .monospacedDigit()
+                                .foregroundStyle(Brand.acid)
+                        } else {
+                            ScrambleText(text: track.fullTitle)
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .lineLimit(1)
+                    .padding(.horizontal, 18)
+                    .frame(maxWidth: .infinity)
+                }
+                .clipShape(.capsule)
+                .overlay(Capsule().stroke(scrub == nil ? .white.opacity(0.15) : Brand.acid, lineWidth: 1))
+            }
+            .contentShape(.capsule)
+            .onTapGesture { Haptics.tap(); open() }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        if horizontal == nil {
+                            horizontal = abs(value.translation.width) > abs(value.translation.height)
+                            if horizontal == true {
+                                startFraction = playedFraction(at: .now)
+                                Haptics.tick()
+                            }
+                        }
+                        guard horizontal == true, player.duration > 0 else { return }
+                        let next = min(max(startFraction + value.translation.width / geo.size.width, 0), 1)
+                        // A soft click every 10 seconds of track.
+                        if let scrub, Int(scrub * player.duration / 10) != Int(next * player.duration / 10) { Haptics.tick() }
+                        scrub = next
+                    }
+                    .onEnded { _ in
+                        defer { horizontal = nil; scrub = nil }
+                        guard horizontal == true, let scrub, player.duration > 0 else { return }
+                        Haptics.step()
+                        player.seek(to: scrub * player.duration)
+                    }
+            )
+        }
+        .frame(height: 50)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(track.fullTitle)
+        .accessibilityHint("Свайп вбок — перемотка, тап — открыть плеер")
+        .accessibilityAdjustableAction { direction in
+            guard player.duration > 0 else { return }
+            let step = direction == .increment ? 10.0 : -10.0
+            player.seek(to: min(max(player.elapsed + step, 0), player.duration))
+        }
+    }
+
+    private func playedFraction(at date: Date) -> Double {
+        guard player.duration > 0 else { return 0 }
+        return min(max(player.liveElapsed(at: date) / player.duration, 0), 1)
+    }
+
+    private static func time(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }

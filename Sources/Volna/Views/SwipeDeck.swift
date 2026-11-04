@@ -9,13 +9,25 @@ struct CoverDeck: View {
     /// the sheet so pulling the cover down closes the player.
     @State private var horizontal: Bool?
 
+    /// Card side when the deck is wider than its card (the Wave screen): the whole width still
+    /// takes swipes, so you can swipe beside the cover too. Nil makes a square deck.
+    var cardSize: CGFloat?
+
     private static let gap: CGFloat = 28
     /// Share of the width (or flick speed) that commits a switch.
     private static let threshold: CGFloat = 0.28
 
     var body: some View {
+        if let cardSize {
+            deck.frame(height: cardSize)
+        } else {
+            deck.aspectRatio(1, contentMode: .fit)
+        }
+    }
+
+    private var deck: some View {
         GeometryReader { geo in
-            let w = geo.size.width
+            let w = cardSize ?? geo.size.width
             let progress = min(abs(drag) / w, 1)
             ZStack {
                 if drag < 0, let next = player.nextTrack {
@@ -38,6 +50,7 @@ struct CoverDeck: View {
                 }
             }
             .frame(width: w, height: w)
+            .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(.rect)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
@@ -68,7 +81,6 @@ struct CoverDeck: View {
                     }
             )
         }
-        .aspectRatio(1, contentMode: .fit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(player.current.map { "Обложка: \($0.fullTitle)" } ?? "Обложка")
         .accessibilityHint("Свайп влево — следующий трек, вправо — предыдущий")

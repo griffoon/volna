@@ -414,22 +414,24 @@ struct TrackActionsPanel: View {
     let track: Track
     @State private var showCard = false
     @State private var videos: [YMClient.Video] = []
+    @State private var clip: YMClient.Clip?
+    @State private var playingClip: YMClient.Clip?
 
-    /// The clip Yandex links to; if it only knows a clip exists, a YouTube search for it.
-    private var clipLink: URL? {
+    /// Where «Клип» leads when there is no Yandex clip to play here: the video Yandex links to,
+    /// or a YouTube search.
+    private var clipLink: URL {
         if let link = videos.first?.link { return link }
-        guard track.clipIds?.isEmpty == false else { return nil }
-        let query = "\(track.artistLine) \(track.fullTitle)"
-        var components = URLComponents(string: "https://www.youtube.com/results")
-        components?.queryItems = [URLQueryItem(name: "search_query", value: query)]
-        return components?.url
+        var components = URLComponents(string: "https://www.youtube.com/results")!
+        components.queryItems = [URLQueryItem(name: "search_query", value: "\(track.artistLine) \(track.fullTitle)")]
+        return components.url!
     }
 
     private var clipTitle: String {
-        guard let video = videos.first else { return "Найти клип на YouTube" }
-        switch video.provider?.lowercased() {
+        if clip?.streamURL != nil { return "Смотреть клип" }
+        switch videos.first?.provider?.lowercased() {
         case "youtube": return "Клип на YouTube"
         case "vimeo": return "Клип на Vimeo"
+        case nil: return "Найти клип на YouTube"
         default: return "Смотреть клип"
         }
     }
@@ -460,9 +462,13 @@ struct TrackActionsPanel: View {
                 }
                 .buttonStyle(.plain)
             }
-            if let clip = clipLink {
-                row(clipTitle, "play.rectangle") {
-                    Haptics.tap(); openURL(clip)
+            row(clipTitle, clip?.streamURL != nil ? "play.rectangle.fill" : "play.rectangle") {
+                Haptics.tap()
+                if let clip, clip.streamURL != nil {
+                    if player.isPlaying { player.togglePlay() }
+                    playingClip = clip
+                } else {
+                    openURL(clipLink)
                 }
             }
             row("Карточка трека", "photo.on.rectangle.angled") {
@@ -494,9 +500,17 @@ struct TrackActionsPanel: View {
             ShareCardSheet(track: track)
                 .presentationDetents([.large])
         }
+        .fullScreenCover(item: $playingClip) { clip in
+            ClipPlayerView(clip: clip, fallback: clipLink)
+        }
         .task(id: track.id) {
             videos = []
-            videos = (try? await session.client?.videos(trackID: track.id.value)) ?? []
+            clip = nil
+            guard let client = session.client else { return }
+            async let supplement = try? client.videos(trackID: track.id.value)
+            let ids = await client.clipIDs(for: track)
+            clip = (try? await client.clips(ids: ids))?.first
+            videos = await supplement ?? []
         }
     }
 

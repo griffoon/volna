@@ -235,6 +235,37 @@ struct YMClient: Sendable {
         }
     }
 
+    /// Yandex's own music video ("клип"): a separate entity with its own id.
+    struct Clip: Decodable, Sendable, Hashable {
+        let clipId: Int?
+        let title: String?
+        let thumbnail: String?
+        let previewUrl: String?
+        let playerId: String?
+        let uuid: String?
+        let duration: Int?
+
+        /// Something AVPlayer can open directly.
+        var streamURL: URL? {
+            guard let previewUrl, let url = URL(string: previewUrl.hasPrefix("//") ? "https:" + previewUrl : previewUrl),
+                  url.scheme?.hasPrefix("http") == true else { return nil }
+            return url
+        }
+    }
+
+    /// Clip ids of a track. Tracks from the wave often come without them, so ask for the full track.
+    func clipIDs(for track: Track) async -> [Int] {
+        if let ids = track.clipIds, !ids.isEmpty { return ids }
+        let full = try? await tracks(refs: [track.id.value])
+        return full?.first?.clipIds ?? []
+    }
+
+    func clips(ids: [Int]) async throws -> [Clip] {
+        guard !ids.isEmpty else { return [] }
+        let list: [Lenient<Clip>] = try await get("clips", query: ["clipIds": ids.map(String.init).joined(separator: ",")])
+        return list.compactMap(\.value)
+    }
+
     /// Music videos Yandex links to the track (mostly YouTube).
     func videos(trackID: String) async throws -> [Video] {
         struct Supplement: Decodable { let videos: [Lenient<Video>]? }
