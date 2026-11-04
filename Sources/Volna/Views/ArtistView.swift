@@ -1,4 +1,5 @@
 import SwiftUI
+import Translation
 
 struct ArtistView: View {
     @Environment(Session.self) private var session
@@ -14,6 +15,39 @@ struct ArtistView: View {
     @State private var photoPage = 0
     @State private var showPhotos = false
     @State private var genius: URL?
+    /// Genius bio as fetched (English as a rule) and its Russian translation.
+    @State private var geniusBio: String?
+    @State private var translatedBio: String?
+    @State private var translation: TranslationSession.Configuration?
+
+    private var bioText: String? {
+        if let translatedBio { return translatedBio }
+        if let yandex = about?.description, !yandex.isEmpty { return yandex }
+        return geniusBio
+    }
+
+    private var bioCaption: String? {
+        if translatedBio != nil { return "genius · перевод" }
+        if about?.description?.isEmpty == false { return nil }
+        if geniusBio != nil { return translation != nil ? "genius · перевожу…" : "genius" }
+        return nil
+    }
+
+    /// Translates paragraph by paragraph so long bios stay within what the system handles at once.
+    private func translate(_ session: TranslationSession) async {
+        guard let geniusBio else { return }
+        let paragraphs = geniusBio.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        let requests = paragraphs.enumerated().filter { !$0.element.isEmpty }
+            .map { TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset)) }
+        guard let responses = try? await session.translations(from: requests) else { return }
+        var out = paragraphs
+        for response in responses {
+            if let index = response.clientIdentifier.flatMap(Int.init), out.indices.contains(index) {
+                out[index] = response.targetText
+            }
+        }
+        withAnimation(.easeInOut) { translatedBio = out.joined(separator: "\n") }
+    }
     @State private var loadingAll = false
 
     /// All of the artist's tracks in random order (not just the popular ten, not in order).
@@ -39,6 +73,36 @@ struct ArtistView: View {
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
 
+            // The bio right under the header: Genius (translated to Russian on the device) when it
+            // has one, otherwise what Yandex says.
+            if let text = bioText {
+                Section(header: TerminalLabel(text: "об артисте")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(text)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(bioExpanded ? nil : Self.bioPreviewLines)
+                            .contentTransition(.opacity)
+                        HStack {
+                            Button(bioExpanded ? "свернуть" : "читать дальше") {
+                                Haptics.tick()
+                                withAnimation(.snappy) { bioExpanded.toggle() }
+                            }
+                            .font(Brand.mono(12, weight: .bold))
+                            .foregroundStyle(Brand.acid)
+                            .buttonStyle(.plain)
+                            Spacer()
+                            if let caption = bioCaption {
+                                Text(caption)
+                                    .font(Brand.mono(10))
+                                    .foregroundStyle(.white.opacity(0.4))
+                            }
+                        }
+                    }
+                    .terminalRow()
+                }
+            }
+
             if let tracks = info?.popularTracks, !tracks.isEmpty {
                 Section(header: TerminalLabel(text: "популярное")) {
                     TrackList(tracks: Array(tracks.prefix(10)), numbered: true)
@@ -56,24 +120,6 @@ struct ArtistView: View {
                 }
             }
 
-            if let text = about?.description, !text.isEmpty {
-                Section(header: TerminalLabel(text: "об артисте")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(text)
-                            .font(.system(size: 15))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(bioExpanded ? nil : Self.bioPreviewLines)
-                        Button(bioExpanded ? "свернуть" : "читать дальше") {
-                            Haptics.tick()
-                            withAnimation(.snappy) { bioExpanded.toggle() }
-                        }
-                        .font(Brand.mono(12, weight: .bold))
-                        .foregroundStyle(Brand.acid)
-                        .buttonStyle(.plain)
-                    }
-                    .terminalRow()
-                }
-            }
 
             if let similar = info?.similarArtists, !similar.isEmpty {
                 Section(header: TerminalLabel(text: "похожие")) {
@@ -129,6 +175,7 @@ struct ArtistView: View {
             ToolbarItem(placement: .topBarTrailing) { PinToggle(target: .artist(artistID)) }
         }
         .task { await load() }
+        .translationTask(translation) { session in await translate(session) }
     }
 
     private static func compact(_ n: Int) -> String {
@@ -234,12 +281,19 @@ struct ArtistView: View {
         async let aboutTask = try? client.artistAbout(id: artistID)
         async let albumsTask = try? client.artistDiscography(id: artistID)
         async let concertsTask = try? client.artistConcerts(id: artistID)
-        async let geniusTask = Genius.artistPage(name: info?.artist.name ?? name)
+        async let geniusTask = Genius.artist(name: info?.artist.name ?? name)
         if session.likedArtists.isEmpty { await session.loadLikedArtists() }
         about = await aboutTask
         discography = await albumsTask ?? []
         concerts = await concertsTask ?? []
-        genius = await geniusTask
+        if let found = await geniusTask {
+            genius = found.url
+            if geniusBio == nil, let bio = await Genius.bio(artistID: found.id) {
+                geniusBio = bio
+                // Source language is detected; the target is Russian.
+                translation = TranslationSession.Configuration(source: nil, target: Locale.Language(identifier: "ru"))
+            }
+        }
     }
 
     private struct Profile {

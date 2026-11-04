@@ -5,7 +5,7 @@
 set -euo pipefail
 . "$HOME/.local/share/swiftly/env.sh"
 SRC="$(cd "$(dirname "$0")" && pwd)"
-WORK="$HOME/volna-build"
+WORK="${VOLNA_WORK:-$HOME/volna-build}"
 mkdir -p "$WORK"
 rsync -a --delete --exclude .build --exclude xtool --exclude .git --exclude SideStore-Madeira-Kit "$SRC/" "$WORK/"
 cd "$WORK"
