@@ -54,8 +54,8 @@ struct YMClient: Sendable {
         try await get("albums/\(id)/with-tracks")
     }
 
-    func artistTracks(id: String) async throws -> [Track] {
-        let page: ArtistTracks = try await get("artists/\(id)/tracks", query: ["page-size": "50"])
+    func artistTracks(id: String, pageSize: Int = 50) async throws -> [Track] {
+        let page: ArtistTracks = try await get("artists/\(id)/tracks", query: ["page-size": String(pageSize)])
         return page.tracks
     }
 
@@ -437,6 +437,18 @@ struct YMClient: Sendable {
         struct Like: Decodable { let album: Album?; let id: FlexibleID? }
         let likes: [Lenient<Like>] = try await get("users/\(uid)/likes/albums")
         return likes.compactMap { $0.value?.album?.id.value ?? $0.value?.id?.value }
+    }
+
+    func likedArtistIDs(uid: String) async throws -> [String] {
+        struct Like: Decodable { let artist: Artist?; let id: FlexibleID? }
+        let likes: [Lenient<Like>] = try await get("users/\(uid)/likes/artists", query: ["with-timestamps": "false"])
+        return likes.compactMap { $0.value?.artist?.id.value ?? $0.value?.id?.value }
+    }
+
+    /// «Подписаться» in the official app is a like on the artist.
+    func setArtistLike(_ liked: Bool, artistID: String, uid: String) async throws {
+        let action = liked ? "add-multiple" : "remove"
+        let _: AnyDecodable = try await post("users/\(uid)/likes/artists/\(action)", form: ["artist-ids": artistID])
     }
 
     func setAlbumLike(_ liked: Bool, albumID: String, uid: String) async throws {

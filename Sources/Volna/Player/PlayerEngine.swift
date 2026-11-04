@@ -201,6 +201,7 @@ final class PlayerEngine {
     private func restore() {
         guard let saved = PlaybackMemory.load(), saved.tracks.indices.contains(saved.index) else { return }
         source = .list
+        resetOrder()
         queue = saved.tracks
         index = saved.index
         elapsed = saved.position
@@ -221,6 +222,7 @@ final class PlayerEngine {
         reportSkipIfNeeded()
         wave = nil
         source = .list
+        resetOrder()
         queue = tracks
         index = max(0, min(start, tracks.count - 1))
         invalidatePreload()
@@ -232,6 +234,7 @@ final class PlayerEngine {
         reportSkipIfNeeded()
         wave = nil
         source = .list
+        resetOrder()
         queue = tracks
         index = max(0, min(start, tracks.count - 1))
         invalidatePreload()
@@ -247,6 +250,7 @@ final class PlayerEngine {
         session.onLog = { [weak self] line in self?.log(line) }
         wave = session
         source = .wave(title: title)
+        resetOrder()
         queue = []
         index = 0
         invalidatePreload()
@@ -390,6 +394,56 @@ final class PlayerEngine {
         return elapsed + min(date.timeIntervalSince(elapsedStamp), 1)
     }
 
+    // MARK: Repeat and shuffle
+
+    enum RepeatMode: Equatable {
+        case off, all, one
+    }
+
+    /// The wave never ends, so there it is only off or one track; lists also get «all».
+    private(set) var repeatMode: RepeatMode = .off
+    /// Shuffle only makes sense for a list; the wave picks its own order.
+    private(set) var isShuffled = false
+    /// The list in its original order while shuffled, to restore it.
+    private var unshuffledQueue: [Track]?
+
+    func cycleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = isWave ? .one : .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+        invalidatePreload()
+        preloadNext()
+    }
+
+    func toggleShuffle() {
+        guard !isWave, let track = current else { return }
+        if isShuffled, let original = unshuffledQueue {
+            // Back to the original order, staying on the track that plays now.
+            queue = original
+            index = original.firstIndex { $0.id == track.id } ?? 0
+            unshuffledQueue = nil
+            isShuffled = false
+        } else {
+            unshuffledQueue = queue
+            var rest = queue
+            rest.remove(at: index)
+            queue = [track] + rest.shuffled()
+            index = 0
+            isShuffled = true
+        }
+        invalidatePreload()
+        preloadNext()
+    }
+
+    /// A new list or a wave starts in its own order; repeat-all doesn't apply to the wave.
+    private func resetOrder() {
+        isShuffled = false
+        unshuffledQueue = nil
+        if isWave, repeatMode == .all { repeatMode = .off }
+    }
+
     // MARK: Sleep timer
 
     func setSleepTimer(_ timer: SleepTimer?) {
@@ -428,11 +482,28 @@ final class PlayerEngine {
             updateNowPlaying()
             return
         }
+        if repeatMode == .one, let track = current {
+            // Same track again from the top; counts as a fresh listen.
+            activePlayer.seek(to: .zero)
+            activePlayer.play()
+            elapsed = 0
+            isPlaying = true
+            updateNowPlaying()
+            wave?.started(track)
+            beginListen(track)
+            return
+        }
         advance()
     }
 
     private func advance() {
         guard index + 1 < queue.count else {
+            if repeatMode == .all, !isWave, !queue.isEmpty {
+                index = 0
+                invalidatePreload()
+                loadCurrent()
+                return
+            }
             if isWave {
                 refillWave(thenAdvance: true)
             } else if let last = current {
@@ -596,7 +667,8 @@ final class PlayerEngine {
     // MARK: Crossfade
 
     private func beginCrossfade(over seconds: Double) {
-        guard let ready = preloaded, queue.indices.contains(index + 1), queue[index + 1].id == ready.trackID,
+        guard repeatMode != .one,
+              let ready = preloaded, queue.indices.contains(index + 1), queue[index + 1].id == ready.trackID,
               standbyPlayer.currentItem === ready.item, let finishing = current
         else { return }
         isCrossfading = true

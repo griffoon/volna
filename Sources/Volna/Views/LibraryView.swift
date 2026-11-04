@@ -424,6 +424,7 @@ struct AlbumView: View {
                     } shuffle: {
                         player.play(tracks.shuffled())
                     }
+                    artistLinks
                     upcomingBanner
                     albumActions
                 }
@@ -465,6 +466,43 @@ struct AlbumView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    /// The album's artists as chips that open their pages.
+    @ViewBuilder
+    private var artistLinks: some View {
+        if let artists = album.artists, !artists.isEmpty {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(artists) { artist in
+                        NavigationLink {
+                            ArtistView(artistID: artist.id.value, name: artist.name)
+                        } label: {
+                            HStack(spacing: 8) {
+                                CoverImage(uri: artist.cover?.uri, size: 100, corner: 14)
+                                    .frame(width: 28, height: 28)
+                                    .clipShape(.circle)
+                                Text(artist.name)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Brand.acid)
+                            }
+                            .padding(.leading, 4)
+                            .padding(.trailing, 12)
+                            .frame(height: 36)
+                            .background(.white.opacity(0.06), in: .capsule)
+                            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
     }
 
     /// For releases that aren't out yet: the date and a presave toggle.

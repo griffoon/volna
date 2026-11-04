@@ -114,6 +114,13 @@ struct NowPlayingView: View {
                     Spacer(minLength: 0)
                     CoverDeck()
                         .matchedGeometryEffect(id: "cover", in: coverSpace)
+                        .overlay(alignment: .bottomTrailing) {
+                            // The clip is a headline feature: when a real video exists, it sits
+                            // right on the cover.
+                            if let track = player.current {
+                                ClipBadge(track: track).padding(12)
+                            }
+                        }
                         .padding(.horizontal, 32)
                     Spacer(minLength: 0)
                     titleRow
@@ -189,8 +196,29 @@ struct NowPlayingView: View {
         }
     }
 
+    private var repeatSymbol: String { player.repeatMode == .one ? "repeat.1" : "repeat" }
+
+    private var repeatLabel: String {
+        switch player.repeatMode {
+        case .off: "Повтор выключен"
+        case .all: "Повтор очереди"
+        case .one: "Повтор трека"
+        }
+    }
+
     private var controls: some View {
-        HStack {
+        HStack(spacing: 0) {
+            // Shuffle is for lists; the wave picks its own order, so the slot stays empty there.
+            Button { Haptics.tick(); player.toggleShuffle() } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(player.isShuffled ? Brand.acid : .white.opacity(0.6))
+                    .frame(width: 40, height: 40)
+            }
+            .opacity(player.isWave ? 0 : 1)
+            .disabled(player.isWave)
+            .accessibilityLabel(player.isShuffled ? "Выключить перемешивание" : "Перемешать")
+            Spacer()
             Button { Haptics.step(); player.previous() } label: {
                 Image(systemName: "backward.fill").frame(width: 64, height: 64)
             }
@@ -217,10 +245,19 @@ struct NowPlayingView: View {
                 Image(systemName: "forward.fill").frame(width: 64, height: 64)
             }
             .accessibilityLabel("Дальше")
+            Spacer()
+            // Lists: off → whole queue → one track. Wave: off → one track.
+            Button { Haptics.tick(); player.cycleRepeat() } label: {
+                Image(systemName: repeatSymbol)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(player.repeatMode == .off ? .white.opacity(0.6) : Brand.acid)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 40, height: 40)
+            }
+            .accessibilityLabel(repeatLabel)
         }
         .font(.system(size: 30, weight: .bold))
         .buttonStyle(.plain)
-        .padding(.horizontal, 12)
     }
 
     private var actions: some View {
@@ -413,26 +450,12 @@ struct TrackActionsPanel: View {
     @Environment(\.openURL) private var openURL
     let track: Track
     @State private var showCard = false
-    @State private var videos: [YMClient.Video] = []
-    @State private var clip: YMClient.Clip?
-    @State private var playingClip: YMClient.Clip?
 
-    /// Where «Клип» leads when there is no Yandex clip to play here: the video Yandex links to,
-    /// or a YouTube search.
-    private var clipLink: URL {
-        if let link = videos.first?.link { return link }
-        var components = URLComponents(string: "https://www.youtube.com/results")!
-        components.queryItems = [URLQueryItem(name: "search_query", value: "\(track.artistLine) \(track.fullTitle)")]
-        return components.url!
-    }
-
-    private var clipTitle: String {
-        if clip?.streamURL != nil { return "Смотреть клип" }
-        switch videos.first?.provider?.lowercased() {
-        case "youtube": return "Клип на YouTube"
-        case "vimeo": return "Клип на Vimeo"
-        case nil: return "Найти клип на YouTube"
-        default: return "Смотреть клип"
+    private func clipTitle(_ result: ClipFinder.Result?) -> String {
+        switch result {
+        case .yandex: "Смотреть клип"
+        case .video: "Клип на YouTube"
+        case .search, nil: "Найти клип на YouTube"
         }
     }
 
@@ -462,14 +485,8 @@ struct TrackActionsPanel: View {
                 }
                 .buttonStyle(.plain)
             }
-            row(clipTitle, clip?.streamURL != nil ? "play.rectangle.fill" : "play.rectangle") {
-                Haptics.tap()
-                if let clip, clip.streamURL != nil {
-                    if player.isPlaying { player.togglePlay() }
-                    playingClip = clip
-                } else {
-                    openURL(clipLink)
-                }
+            ClipLauncher(track: track) { result in
+                rowLabel(clipTitle(result), result?.isFound == true ? "play.rectangle.fill" : "play.rectangle")
             }
             row("Карточка трека", "photo.on.rectangle.angled") {
                 Haptics.tap(); showCard = true
@@ -499,18 +516,6 @@ struct TrackActionsPanel: View {
         .sheet(isPresented: $showCard) {
             ShareCardSheet(track: track)
                 .presentationDetents([.large])
-        }
-        .fullScreenCover(item: $playingClip) { clip in
-            ClipPlayerView(clip: clip, fallback: clipLink)
-        }
-        .task(id: track.id) {
-            videos = []
-            clip = nil
-            guard let client = session.client else { return }
-            async let supplement = try? client.videos(trackID: track.id.value)
-            let ids = await client.clipIDs(for: track)
-            clip = (try? await client.clips(ids: ids))?.first
-            videos = await supplement ?? []
         }
     }
 

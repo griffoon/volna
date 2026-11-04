@@ -5,9 +5,6 @@ import SwiftUI
 struct CoverDeck: View {
     @Environment(PlayerEngine.self) private var player
     @State private var drag: CGFloat = 0
-    /// Decided on the first movement: horizontal drags move the card, vertical ones are left to
-    /// the sheet so pulling the cover down closes the player.
-    @State private var horizontal: Bool?
 
     /// Card side when the deck is wider than its card (the Wave screen): the whole width still
     /// takes swipes, so you can swipe beside the cover too. Nil makes a square deck.
@@ -52,34 +49,29 @@ struct CoverDeck: View {
             .frame(width: w, height: w)
             .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(.rect)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 12)
-                    .onChanged { value in
-                        if horizontal == nil {
-                            horizontal = abs(value.translation.width) > abs(value.translation.height)
-                        }
-                        guard horizontal == true else { return }
-                        // Resist when there is nothing on that side.
-                        let x = value.translation.width
-                        let blocked = (x < 0 && player.nextTrack == nil && !player.isWave) || (x > 0 && player.previousTrack == nil)
-                        let newDrag = blocked ? x * 0.25 : x
-                        // A detent click when the card crosses the point where letting go would switch.
-                        if (abs(drag) > w * Self.threshold) != (abs(newDrag) > w * Self.threshold), !blocked { Haptics.tick() }
-                        drag = newDrag
+            // Sideways only: vertical swipes fail this at once and go to the page underneath
+            // (scrolling the Wave screen, pulling the player down).
+            .gesture(HorizontalPan(
+                onChanged: { value in
+                    // Resist when there is nothing on that side.
+                    let x = value.translation
+                    let blocked = (x < 0 && player.nextTrack == nil && !player.isWave) || (x > 0 && player.previousTrack == nil)
+                    let newDrag = blocked ? x * 0.25 : x
+                    // A detent click when the card crosses the point where letting go would switch.
+                    if (abs(drag) > w * Self.threshold) != (abs(newDrag) > w * Self.threshold), !blocked { Haptics.tick() }
+                    drag = newDrag
+                },
+                onEnded: { value in
+                    let flick = value.predicted
+                    if (drag < -w * Self.threshold || flick < -w * 0.6), player.nextTrack != nil || player.isWave {
+                        Haptics.thump(); commit(to: -(w + Self.gap)) { player.next() }
+                    } else if (drag > w * Self.threshold || flick > w * 0.6), player.previousTrack != nil {
+                        Haptics.thump(); commit(to: w + Self.gap) { player.goBack() }
+                    } else {
+                        withAnimation(.spring(duration: 0.35, bounce: 0.35)) { drag = 0 }
                     }
-                    .onEnded { value in
-                        defer { horizontal = nil }
-                        guard horizontal == true else { return }
-                        let flick = value.predictedEndTranslation.width
-                        if (drag < -w * Self.threshold || flick < -w * 0.6), player.nextTrack != nil || player.isWave {
-                            Haptics.thump(); commit(to: -(w + Self.gap)) { player.next() }
-                        } else if (drag > w * Self.threshold || flick > w * 0.6), player.previousTrack != nil {
-                            Haptics.thump(); commit(to: w + Self.gap) { player.goBack() }
-                        } else {
-                            withAnimation(.spring(duration: 0.35, bounce: 0.35)) { drag = 0 }
-                        }
-                    }
-            )
+                }
+            ))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(player.current.map { "Обложка: \($0.fullTitle)" } ?? "Обложка")

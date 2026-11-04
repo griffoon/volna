@@ -15,11 +15,14 @@ struct WaveView: View {
     @State private var showLog = false
     /// The wave last played on any device, offered when it differs from plain My Wave.
     @State private var lastWave: YMClient.LastWave?
+    private static let topID = "waveTop"
 
     private var scrollHint: some View {
         VStack(spacing: 2) {
             Text("подборки").font(Brand.mono(11, weight: .bold))
             Image(systemName: "chevron.compact.down").font(.system(size: 22, weight: .semibold))
+                // Every few seconds the arrow nudges downwards as a hint that there's more below.
+                .symbolEffect(.bounce.down.byLayer, options: .repeat(.periodic(delay: 3.5)))
         }
         .foregroundStyle(.white.opacity(0.7))
         .padding(.horizontal, 10)
@@ -62,6 +65,7 @@ struct WaveView: View {
                     // The smoke is meant to glow behind the title, so it gets no scrim.
                     .opacity(effectRaw == VisualizerEffect.smoke.rawValue ? 0 : 1)
 
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(spacing: 0) {
@@ -76,6 +80,7 @@ struct WaveView: View {
                         .padding(.bottom, 70)
                         .containerRelativeFrame(.vertical)
                         .contentShape(.rect)
+                        .id(Self.topID)
                         .onLongPressGesture(minimumDuration: 0.45) {
                             ascii.toggle(); Haptics.thump()
                             flash(ascii ? "> terminal mode: on" : "> terminal mode: off")
@@ -100,14 +105,11 @@ struct WaveView: View {
                 } action: { _, visible in
                     heroVisible = visible
                 }
-                // At the very top the screen is all wave: tab bar and mini player hide, and come
-                // back as soon as you scroll towards the feed.
-                .onScrollGeometryChange(for: Bool.self) { geo in
-                    geo.contentOffset.y + geo.contentInsets.top < 24
-                } action: { _, atTop in
-                    withAnimation(.snappy) { router.waveHeroFocused = atTop }
+                .onChange(of: router.waveScrollToTop) {
+                    Haptics.tick()
+                    withAnimation(.spring(duration: 0.5, bounce: 0.15)) { proxy.scrollTo(Self.topID, anchor: .top) }
                 }
-                .onDisappear { router.waveHeroFocused = false }
+                }
 
                 if let problem = TunnelDiagnostics.shared.message {
                     Text("> metal: \(problem)")
@@ -134,7 +136,6 @@ struct WaveView: View {
                         .transition(.opacity)
                 }
             }
-            .toolbarVisibility(router.waveHeroFocused ? .hidden : .visible, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Настройки волны", systemImage: "slider.horizontal.3") {
@@ -250,21 +251,32 @@ struct WaveView: View {
 
     private var center: some View {
         VStack(spacing: 18) {
-            Text(headline)
-                .font(Brand.display(52))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.4)
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.5), radius: 18)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.35), value: headline)
+            Button {
+                guard hasTrack, let artist = player.current?.artists.first else { return }
+                Haptics.tap()
+                router.destination = .artist(id: artist.id.value, name: artist.name)
+            } label: {
+                Text(headline)
+                    .font(Brand.display(52))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.4)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 18)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.35), value: headline)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(hasTrack ? "Открыть исполнителя" : "")
 
             if let track = player.current, hasTrack {
                 // Same card as in the player: swipe sideways anywhere on this row (beside the cover
                 // too) to switch; vertical drags scroll the page.
                 CoverDeck(cardSize: 230)
                     .frame(maxWidth: .infinity)
+                    .overlay(alignment: .bottom) {
+                        ClipBadge(track: track).offset(y: 14)
+                    }
                     .transition(.scale.combined(with: .opacity))
                 trackBar(track)
             }
@@ -490,7 +502,6 @@ private struct ScrubPill: View {
     /// Fraction being scrubbed to; nil when not dragging.
     @State private var scrub: Double?
     @State private var startFraction: Double = 0
-    @State private var horizontal: Bool?
 
     var body: some View {
         GeometryReader { geo in
@@ -522,29 +533,25 @@ private struct ScrubPill: View {
             }
             .contentShape(.capsule)
             .onTapGesture { Haptics.tap(); open() }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { value in
-                        if horizontal == nil {
-                            horizontal = abs(value.translation.width) > abs(value.translation.height)
-                            if horizontal == true {
-                                startFraction = playedFraction(at: .now)
-                                Haptics.tick()
-                            }
-                        }
-                        guard horizontal == true, player.duration > 0 else { return }
-                        let next = min(max(startFraction + value.translation.width / geo.size.width, 0), 1)
-                        // A soft click every 10 seconds of track.
-                        if let scrub, Int(scrub * player.duration / 10) != Int(next * player.duration / 10) { Haptics.tick() }
-                        scrub = next
-                    }
-                    .onEnded { _ in
-                        defer { horizontal = nil; scrub = nil }
-                        guard horizontal == true, let scrub, player.duration > 0 else { return }
-                        Haptics.step()
-                        player.seek(to: scrub * player.duration)
-                    }
-            )
+            .gesture(HorizontalPan(
+                onBegan: {
+                    startFraction = playedFraction(at: .now)
+                    Haptics.tick()
+                },
+                onChanged: { value in
+                    guard player.duration > 0 else { return }
+                    let next = min(max(startFraction + value.translation / geo.size.width, 0), 1)
+                    // A soft click every 10 seconds of track.
+                    if let scrub, Int(scrub * player.duration / 10) != Int(next * player.duration / 10) { Haptics.tick() }
+                    scrub = next
+                },
+                onEnded: { _ in
+                    defer { scrub = nil }
+                    guard let scrub, player.duration > 0 else { return }
+                    Haptics.step()
+                    player.seek(to: scrub * player.duration)
+                }
+            ))
         }
         .frame(height: 50)
         .accessibilityElement(children: .ignore)

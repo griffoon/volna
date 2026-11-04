@@ -27,7 +27,12 @@ struct RootView: View {
     @Namespace private var playerZoom
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: Binding(get: { tab }, set: { picked in
+            // Tapping the Wave tab while it's open takes the screen back to the top,
+            // like tapping the status bar.
+            if picked == tab, picked == .wave { router.waveScrollToTop += 1 }
+            tab = picked
+        })) {
             Tab("Волна", systemImage: "waveform", value: .wave) {
                 WaveView()
             }
@@ -39,7 +44,7 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .modifier(MiniPlayerAccessory(visible: player.current != nil && !(tab == .wave && router.waveHeroFocused)) {
+        .modifier(MiniPlayerAccessory(visible: player.current != nil) {
             MiniPlayer { showPlayer = true }
                 .matchedTransitionSource(id: "player", in: playerZoom)
         })

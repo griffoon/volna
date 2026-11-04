@@ -239,6 +239,35 @@ struct ArtistBriefInfo: Decodable, Sendable {
     let alsoAlbums: [Album]?
     let popularTracks: [Track]?
     let similarArtists: [Artist]?
+    /// Every photo of the artist; the official app lets you page through them.
+    let allCovers: [CoverRef]?
+    let stats: Stats?
+
+    struct Stats: Decodable, Sendable {
+        let lastMonthListeners: Int?
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case artist, albums, alsoAlbums, popularTracks, similarArtists, allCovers, stats
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        artist = try c.decode(ArtistFull.self, forKey: .artist)
+        albums = try? c.decode([Album].self, forKey: .albums)
+        alsoAlbums = try? c.decode([Album].self, forKey: .alsoAlbums)
+        popularTracks = try? c.decode([Track].self, forKey: .popularTracks)
+        similarArtists = try? c.decode([Artist].self, forKey: .similarArtists)
+        allCovers = (try? c.decode([Lenient<CoverRef>].self, forKey: .allCovers))?.compactMap(\.value)
+        stats = try? c.decode(Stats.self, forKey: .stats)
+    }
+
+    /// Photos to page through: all covers, or at least the main one.
+    var photos: [String] {
+        let all = (allCovers ?? []).compactMap(\.uri)
+        if !all.isEmpty { return all }
+        return artist.coverURI.map { [$0] } ?? []
+    }
 }
 
 struct ArtistFull: Decodable, Sendable {
@@ -247,8 +276,42 @@ struct ArtistFull: Decodable, Sendable {
     let cover: CoverRef?
     let genres: [String]?
     let ogImage: String?
+    let likesCount: Int?
+    let links: [ArtistLink]?
+    let counts: Counts?
+
+    struct Counts: Decodable, Sendable {
+        let tracks: Int?
+        let directAlbums: Int?
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, cover, genres, ogImage, likesCount, links, counts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(FlexibleID.self, forKey: .id)
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        cover = try? c.decode(CoverRef.self, forKey: .cover)
+        genres = try? c.decode([String].self, forKey: .genres)
+        ogImage = try? c.decode(String.self, forKey: .ogImage)
+        likesCount = try? c.decode(Int.self, forKey: .likesCount)
+        links = (try? c.decode([Lenient<ArtistLink>].self, forKey: .links))?.compactMap(\.value)
+        counts = try? c.decode(Counts.self, forKey: .counts)
+    }
 
     var coverURI: String? { cover?.uri ?? ogImage }
+}
+
+/// Official site or social profile listed on the artist page.
+struct ArtistLink: Decodable, Sendable, Hashable {
+    let title: String?
+    let href: String?
+    let type: String?
+    let socialNetwork: String?
+
+    var url: URL? { href.flatMap(URL.init(string:)) }
 }
 
 // MARK: - My Wave

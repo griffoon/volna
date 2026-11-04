@@ -9,6 +9,7 @@ struct HomeSections: View {
     @State private var events: [Feed.Event] = []
     @State private var releases: [Album] = []
     @State private var chart: [Track] = []
+    @State private var fullChart: [Track] = []
     @State private var recent: [RecentContext] = []
     @State private var loaded = false
     @State private var loading = false
@@ -44,7 +45,7 @@ struct HomeSections: View {
             .padding(.horizontal, 20)
 
             if !recent.isEmpty {
-                shelf("недавно слушал") {
+                shelf("недавно слушал", open: { HistoryView() }) {
                     ForEach(recent) { context in
                         RecentContextLink(context: context) { RecentCard(context: context) }
                     }
@@ -52,7 +53,11 @@ struct HomeSections: View {
             }
 
             if !generated.isEmpty {
-                shelf("собрано для тебя") {
+                shelf("собрано для тебя", open: {
+                    ShelfGridView(title: "Собрано для тебя", caption: "feed · generated", items: generated) { playlist in
+                        NavigationLink { PlaylistView(playlist: playlist) } label: { PlaylistCard(playlist: playlist) }
+                    }
+                }) {
                     ForEach(generated) { playlist in
                         NavigationLink { PlaylistView(playlist: playlist) } label: {
                             PlaylistCard(playlist: playlist)
@@ -63,15 +68,24 @@ struct HomeSections: View {
 
             ForEach(events) { event in
                 if !event.albums.isEmpty {
-                    shelf(event.title?.lowercased() ?? "новое у твоих артистов") {
+                    shelf(event.title?.lowercased() ?? "новое у твоих артистов", open: {
+                        ShelfGridView(title: event.title ?? "Новое у твоих артистов", items: event.albums) { album in
+                            NavigationLink { AlbumView(album: album) } label: { AlbumCard(album: album) }
+                        }
+                    }) {
                         ForEach(event.albums) { album in
                             NavigationLink { AlbumView(album: album) } label: { AlbumCard(album: album) }
                         }
                     }
                 } else if !event.tracks.isEmpty {
-                    trackBlock(event.title?.lowercased() ?? "для тебя", tracks: Array(event.tracks.prefix(5)))
+                    trackBlock(event.title?.lowercased() ?? "для тебя", tracks: Array(event.tracks.prefix(5)),
+                               open: { ShelfTracksView(title: event.title ?? "Для тебя", tracks: event.tracks) })
                 } else if !event.artists.isEmpty {
-                    shelf(event.title?.lowercased() ?? "артисты") {
+                    shelf(event.title?.lowercased() ?? "артисты", open: {
+                        ShelfGridView(title: event.title ?? "Артисты", items: event.artists.compactMap(\.artist)) { artist in
+                            NavigationLink { ArtistView(artistID: artist.id.value, name: artist.name) } label: { ArtistCard(artist: artist) }
+                        }
+                    }) {
                         ForEach(Array(event.artists.enumerated()), id: \.offset) { _, item in
                             if let artist = item.artist {
                                 NavigationLink {
@@ -84,7 +98,7 @@ struct HomeSections: View {
             }
 
             if !releases.isEmpty {
-                shelf("новые релизы") {
+                shelf("новые релизы", open: { ReleasesFullView() }) {
                     ForEach(releases) { album in
                         NavigationLink { AlbumView(album: album) } label: { AlbumCard(album: album) }
                     }
@@ -92,7 +106,8 @@ struct HomeSections: View {
             }
 
             if !chart.isEmpty {
-                trackBlock("чарт · топ \(chart.count)", tracks: chart, numbered: true)
+                trackBlock("чарт", tracks: chart, numbered: true,
+                           open: { ShelfTracksView(title: "Чарт", caption: "топ \(fullChart.count)", tracks: fullChart, numbered: true) })
             }
 
             if loaded && generated.isEmpty && events.isEmpty && releases.isEmpty && chart.isEmpty {
@@ -118,30 +133,44 @@ struct HomeSections: View {
         collapsedRaw = set.sorted().joined(separator: "\n")
     }
 
-    /// Section title that folds its shelf away on tap, like a spoiler; remembered across launches.
-    private func header(_ title: String) -> some View {
+    /// Section title: tapping the name opens the whole list full screen, the chevron folds
+    /// the shelf away like a spoiler (remembered across launches).
+    private func header<Destination: View>(_ title: String, @ViewBuilder open: () -> Destination) -> some View {
         let isCollapsed = collapsed.contains(title)
-        return Button {
-            Haptics.tick()
-            withAnimation(.snappy) { toggleCollapsed(title) }
-        } label: {
-            HStack(spacing: 8) {
-                TerminalLabel(text: title)
-                    .opacity(isCollapsed ? 0.5 : 1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+        return HStack(spacing: 8) {
+            NavigationLink { open() } label: {
+                HStack(spacing: 6) {
+                    TerminalLabel(text: title)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Brand.acid.opacity(0.8))
+                }
+                .opacity(isCollapsed ? 0.5 : 1)
+                .contentShape(.rect)
             }
-            .contentShape(.rect)
+            .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
+            .accessibilityHint("Открыть весь список")
+            Spacer(minLength: 0)
+            Button {
+                Haptics.tick()
+                withAnimation(.snappy) { toggleCollapsed(title) }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+                    .frame(width: 36, height: 28)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel(isCollapsed ? "Развернуть: \(title)" : "Свернуть: \(title)")
         }
-        .accessibilityLabel(isCollapsed ? "Развернуть: \(title)" : "Свернуть: \(title)")
     }
 
-    private func shelf<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func shelf<Content: View, Destination: View>(
+        _ title: String, @ViewBuilder open: () -> Destination, @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            header(title).padding(.horizontal, 20)
+            header(title, open: open).padding(.horizontal, 20)
             if !collapsed.contains(title) {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) { content() }
@@ -155,9 +184,11 @@ struct HomeSections: View {
         }
     }
 
-    private func trackBlock(_ title: String, tracks: [Track], numbered: Bool = false) -> some View {
+    private func trackBlock<Destination: View>(
+        _ title: String, tracks: [Track], numbered: Bool = false, @ViewBuilder open: () -> Destination
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            header(title)
+            header(title, open: open)
             if !collapsed.contains(title) {
                 ForEach(Array(tracks.enumerated()), id: \.offset) { offset, track in
                     Button {
@@ -187,9 +218,11 @@ struct HomeSections: View {
         }
         if let ids = await releaseIDs {
             releases = (try? await client.albums(ids: Array(ids.prefix(Self.maxReleases)))) ?? []
+            ReleasesFeed.shared.prime(ids: ids, albums: releases)
         }
         if let info = await chartInfo {
-            chart = Array(info.entries.compactMap(\.track).prefix(Self.chartLength))
+            fullChart = info.entries.compactMap(\.track)
+            chart = Array(fullChart.prefix(Self.chartLength))
         }
         if let history = await history {
             var seen = Set<String>()

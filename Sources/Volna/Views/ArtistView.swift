@@ -11,6 +11,21 @@ struct ArtistView: View {
     @State private var concerts: [Concert] = []
     @State private var bioExpanded = false
     @State private var error: String?
+    @State private var photoPage = 0
+    @State private var showPhotos = false
+    @State private var genius: URL?
+    @State private var loadingAll = false
+
+    /// All of the artist's tracks in random order (not just the popular ten, not in order).
+    private func playShuffled() async {
+        guard !loadingAll else { return }
+        loadingAll = true
+        defer { loadingAll = false }
+        var tracks = (try? await session.client?.artistTracks(id: artistID, pageSize: 300)) ?? []
+        if tracks.isEmpty { tracks = info?.popularTracks ?? [] }
+        guard !tracks.isEmpty else { return }
+        player.play(tracks.shuffled())
+    }
 
     /// Bio lines shown before «читать дальше».
     private static let bioPreviewLines = 4
@@ -76,11 +91,38 @@ struct ArtistView: View {
                     .terminalRow()
                 }
             }
+
+            if !profiles.isEmpty {
+                Section(header: TerminalLabel(text: "профили")) {
+                    ForEach(profiles, id: \.url) { profile in
+                        Link(destination: profile.url) {
+                            HStack(spacing: 14) {
+                                Image(systemName: profile.symbol)
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundStyle(Brand.acid)
+                                    .frame(width: 26)
+                                Text(profile.title)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(.white)
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.4))
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        .terminalRow()
+                    }
+                }
+            }
         }
         .terminalPage()
         .overlay {
             if info == nil, error == nil { ProgressView().tint(Brand.acid) }
             if let error { ErrorBanner(message: error) { Task { await load() } } }
+        }
+        .fullScreenCover(isPresented: $showPhotos) {
+            ArtistPhotoViewer(photos: info?.photos ?? [], page: $photoPage)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -89,32 +131,58 @@ struct ArtistView: View {
         .task { await load() }
     }
 
+    private static func compact(_ n: Int) -> String {
+        n.formatted(.number.notation(.compactName).locale(Locale(identifier: "ru_RU")))
+    }
+
+    private var listeners: Int? { about?.monthlyListeners ?? info?.stats?.lastMonthListeners }
+
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            CoverImage(uri: info?.artist.coverURI, size: 800, corner: 0)
-                .grayscale(0.4)
-                .frame(maxWidth: .infinity)
-                .frame(height: 360)
-                .clipped()
-                .overlay(LinearGradient(colors: [.clear, Brand.ink], startPoint: .center, endPoint: .bottom))
+            ArtistPhotoPager(photos: info?.photos ?? [], page: $photoPage) { showPhotos = true }
+                .frame(height: 380)
 
             VStack(alignment: .leading, spacing: 12) {
-                if let listeners = about?.monthlyListeners {
-                    Text("> \(listeners.formatted(.number.notation(.compactName).locale(Locale(identifier: "ru_RU")))) слушателей за месяц")
-                        .font(Brand.mono(12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.7))
+                HStack(spacing: 12) {
+                    if let listeners {
+                        Label("\(Self.compact(listeners)) слушателей за месяц", systemImage: "headphones")
+                    }
+                    if let likes = info?.artist.likesCount, likes > 0 {
+                        Label(Self.compact(likes), systemImage: "heart.fill")
+                    }
                 }
-                Text(info?.artist.name ?? name)
-                    .font(Brand.display(38))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.5)
+                .font(Brand.mono(12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.75))
+                .labelStyle(.titleAndIcon)
+                HStack(alignment: .bottom) {
+                    Text(info?.artist.name ?? name)
+                        .font(Brand.display(38))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.5)
+                    Spacer(minLength: 8)
+                    let liked = session.isLiked(artistID: artistID)
+                    Button {
+                        liked ? Haptics.tap() : Haptics.success()
+                        Task { await session.toggleLike(artistID: artistID) }
+                    } label: {
+                        Label(liked ? "ВЫ ПОДПИСАНЫ" : "ПОДПИСАТЬСЯ", systemImage: liked ? "heart.fill" : "heart")
+                            .font(Brand.mono(11, weight: .bold))
+                            .foregroundStyle(liked ? Brand.acid : .white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(.black.opacity(0.5), in: .capsule)
+                            .overlay(Capsule().stroke(liked ? Brand.acid : .white.opacity(0.4), lineWidth: 1))
+                            .symbolEffect(.bounce, value: liked)
+                    }
+                    .buttonStyle(.plain)
+                }
                 HStack(spacing: 10) {
                     Button {
                         Haptics.thump()
-                        player.play(info?.popularTracks ?? [])
+                        Task { await playShuffled() }
                     } label: {
-                        Label("СЛУШАТЬ", systemImage: "play.fill")
+                        Label(loadingAll ? "ЗАГРУЖАЮ…" : "ИГРАТЬ", systemImage: "shuffle")
                             .font(Brand.mono(13, weight: .bold))
                             .frame(maxWidth: .infinity, minHeight: 46)
                             .foregroundStyle(Brand.ink)
@@ -166,9 +234,42 @@ struct ArtistView: View {
         async let aboutTask = try? client.artistAbout(id: artistID)
         async let albumsTask = try? client.artistDiscography(id: artistID)
         async let concertsTask = try? client.artistConcerts(id: artistID)
+        async let geniusTask = Genius.artistPage(name: info?.artist.name ?? name)
+        if session.likedArtists.isEmpty { await session.loadLikedArtists() }
         about = await aboutTask
         discography = await albumsTask ?? []
         concerts = await concertsTask ?? []
+        genius = await geniusTask
+    }
+
+    private struct Profile {
+        let title: String
+        let symbol: String
+        let url: URL
+    }
+
+    /// Links Yandex lists for the artist (YouTube, VK, site…) plus Genius when there's an exact match.
+    private var profiles: [Profile] {
+        var result: [Profile] = []
+        for link in info?.artist.links ?? [] {
+            guard let url = link.url else { continue }
+            let network = (link.socialNetwork ?? link.type ?? "").lowercased()
+            let host = url.host()?.lowercased() ?? ""
+            let (title, symbol): (String, String) = switch true {
+            case network.contains("youtube") || host.contains("youtu"): ("YouTube", "play.rectangle.fill")
+            case network.contains("vk") || host.contains("vk.com"): ("ВКонтакте", "person.2.fill")
+            case network.contains("telegram") || host.contains("t.me"): ("Telegram", "paperplane.fill")
+            case network.contains("instagram") || host.contains("instagram"): ("Instagram", "camera.fill")
+            case network.contains("twitter") || host.contains("twitter") || host.contains("x.com"): ("X", "bubble.left.fill")
+            case network.contains("tiktok") || host.contains("tiktok"): ("TikTok", "music.note")
+            default: (link.title ?? host, "globe")
+            }
+            result.append(Profile(title: title, symbol: symbol, url: url))
+        }
+        if let genius, !result.contains(where: { $0.url.host()?.contains("genius") == true }) {
+            result.append(Profile(title: "Genius", symbol: "text.quote", url: genius))
+        }
+        return result
     }
 }
 

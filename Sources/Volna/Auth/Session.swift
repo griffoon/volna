@@ -109,6 +109,27 @@ final class Session {
 
     func isLiked(album: Album) -> Bool { likedAlbums.contains(album.id.value) }
 
+    private(set) var likedArtists: Set<String> = []
+
+    func loadLikedArtists() async {
+        guard let client, let uid else { return }
+        if let ids = try? await client.likedArtistIDs(uid: uid) { likedArtists = Set(ids) }
+    }
+
+    func isLiked(artistID: String) -> Bool { likedArtists.contains(artistID) }
+
+    func toggleLike(artistID id: String) async {
+        guard let client, let uid else { return }
+        let liked = !likedArtists.contains(id)
+        if liked { likedArtists.insert(id) } else { likedArtists.remove(id) }
+        do {
+            try await client.setArtistLike(liked, artistID: id, uid: uid)
+        } catch {
+            if liked { likedArtists.remove(id) } else { likedArtists.insert(id) }
+            lastError = error.localizedDescription
+        }
+    }
+
     func toggleLike(album: Album) async {
         guard let client, let uid else { return }
         let id = album.id.value
