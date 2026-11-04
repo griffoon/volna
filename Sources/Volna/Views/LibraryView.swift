@@ -27,7 +27,7 @@ struct LibraryView: View {
 
                     if !session.pins.isEmpty || !session.presaves.isEmpty { tokens }
 
-                    crate
+                    cdShelf
 
                     NavigationLink { HistoryView() } label: {
                         HStack(spacing: 10) {
@@ -112,9 +112,9 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: Playlists as a crate you flip through
+    // MARK: Playlists as a shelf of CDs
 
-    private var crate: some View {
+    private var cdShelf: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 TerminalLabel(text: "плейлисты · \(playlists.count)")
@@ -126,30 +126,31 @@ struct LibraryView: View {
             .padding(.horizontal, 20)
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 0) {
-                    ForEach(playlists) { playlist in
+                    ForEach(Array(playlists.enumerated()), id: \.element.id) { number, playlist in
                         NavigationLink { PlaylistView(playlist: playlist) } label: {
-                            CrateCard(cover: playlist.coverURI, title: playlist.title,
-                                      caption: playlist.trackCount.map { "[\($0) трк]" })
+                            CDCase(cover: playlist.coverURI, title: playlist.title,
+                                   caption: playlist.trackCount.map { "[\($0) трк]" }, number: number + 1)
                         }
                         .buttonStyle(.plain)
-                        .crateFlip()
+                        .shelfTilt()
                     }
                     Button {
                         Haptics.tap()
                         newPlaylistTitle = ""
                         creating = true
                     } label: {
-                        CrateCard(cover: nil, title: "новый плейлист", caption: "+ создать", isNew: true)
+                        CDCase(cover: nil, title: "новый плейлист", caption: "+ записать болванку",
+                               number: playlists.count + 1, isBlank: true)
                     }
                     .buttonStyle(.plain)
-                    .crateFlip()
+                    .shelfTilt()
                 }
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
-            .contentMargins(.horizontal, 60, for: .scrollContent)
+            .contentMargins(.horizontal, 40, for: .scrollContent)
             .scrollIndicators(.hidden)
-            .frame(height: 270)
+            .frame(height: 256)
             .onScrollTargetVisibilityChange(idType: Playlist.ID.self, threshold: 0.9) { _ in Haptics.tick() }
         }
     }
@@ -294,41 +295,134 @@ private struct LikedWall: View {
     }
 }
 
-/// A playlist as a record in a crate: a big cover with its title under it.
-private struct CrateCard: View {
+/// A playlist as a CD in its jewel case: clear plastic with a spine and a glare over the cover.
+/// When the case reaches the middle of the shelf, the disc slides out of it: a burned CD-R with
+/// the cover printed on it, a rainbow-silver rim and a marker label like `MIX_007.ISO`.
+private struct CDCase: View {
     let cover: String?
     let title: String
     let caption: String?
-    var isNew = false
+    /// Position on the shelf, for the disc's label.
+    let number: Int
+    var isBlank = false
+
+    private static let caseSide: CGFloat = 186
+    private static let disc: CGFloat = 176
+    /// How far the disc slides out when the case is centred.
+    private static let slide: CGFloat = 58
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if isNew {
-                    ZStack {
-                        Rectangle().fill(.white.opacity(0.03))
-                        Image(systemName: "plus").font(.system(size: 40, weight: .light)).foregroundStyle(Brand.acid)
+            ZStack(alignment: .leading) {
+                disc
+                    .padding(.leading, 6)
+                    .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                        let centred = 1 - min(abs(phase.value), 1)
+                        return content
+                            .offset(x: centred * Self.slide)
+                            .rotationEffect(.degrees(centred * 70))
                     }
-                    .overlay(Rectangle().stroke(Brand.acid.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
-                } else {
-                    CoverImage(uri: cover, size: 600, corner: 3)
-                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white.opacity(0.12), lineWidth: 1))
-                }
+                jewelCase
             }
-            .frame(width: 200, height: 200)
-            .shadow(color: .black.opacity(0.7), radius: 18, y: 10)
+            .frame(width: Self.caseSide + Self.slide, height: Self.caseSide, alignment: .leading)
             Text(title)
                 .font(Brand.display(16))
                 .foregroundStyle(.white)
                 .lineLimit(1)
+                .frame(width: Self.caseSide, alignment: .leading)
             if let caption {
                 Text(caption)
                     .font(Brand.mono(11, weight: .bold))
-                    .foregroundStyle(isNew ? Brand.acid : .white.opacity(0.45))
+                    .foregroundStyle(isBlank ? Brand.acid : .white.opacity(0.45))
             }
         }
-        .frame(width: 200, alignment: .leading)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
+    }
+
+    private var label: String {
+        isBlank ? "BLANK CD-R" : String(format: "MIX_%03d.ISO", number)
+    }
+
+    // MARK: The disc
+
+    private var disc: some View {
+        let d = Self.disc
+        return ZStack {
+            // Data side: silver with a faint rainbow sheen.
+            Circle().fill(AngularGradient(colors: [
+                Color(white: 0.78), Color(red: 0.75, green: 0.85, blue: 0.95), Color(white: 0.9),
+                Color(red: 0.95, green: 0.8, blue: 0.9), Color(white: 0.7), Color(red: 0.85, green: 0.95, blue: 0.8),
+                Color(white: 0.78),
+            ], center: .center))
+            // Printed face: the cover (or bare CD-R green-gold), leaving the rim visible.
+            Group {
+                if isBlank {
+                    Circle().fill(LinearGradient(colors: [Color(red: 0.55, green: 0.6, blue: 0.35), Color(red: 0.3, green: 0.35, blue: 0.2)],
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+                } else {
+                    CoverImage(uri: cover, size: 400, corner: 0)
+                        .clipShape(.circle)
+                }
+            }
+            .frame(width: d - 10, height: d - 10)
+            // Marker label across the lower half, the way burned discs get signed.
+            Text(label)
+                .font(Brand.mono(11, weight: .heavy))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(.black.opacity(0.75), in: .rect(cornerRadius: 2))
+                .offset(y: d * 0.27)
+            // Clear hub ring and the hole.
+            Circle().stroke(.white.opacity(0.55), lineWidth: 7).frame(width: d * 0.3, height: d * 0.3)
+            Circle().fill(Brand.ink).frame(width: d * 0.1, height: d * 0.1)
+                .overlay(Circle().stroke(.white.opacity(0.4), lineWidth: 1))
+        }
+        .frame(width: d, height: d)
+        .shadow(color: .black.opacity(0.6), radius: 8, x: 4)
+    }
+
+    // MARK: The case
+
+    private var jewelCase: some View {
+        let side = Self.caseSide
+        return ZStack(alignment: .leading) {
+            Group {
+                if isBlank {
+                    ZStack {
+                        Rectangle().fill(.white.opacity(0.04))
+                        VStack(spacing: 6) {
+                            Image(systemName: "plus").font(.system(size: 34, weight: .light))
+                            Text("записать").font(Brand.mono(11, weight: .bold))
+                        }
+                        .foregroundStyle(Brand.acid)
+                    }
+                } else {
+                    CoverImage(uri: cover, size: 600, corner: 0)
+                }
+            }
+            .frame(width: side - 12, height: side)
+            .padding(.leading, 12)
+            // Spine with the hinge ridges.
+            VStack(spacing: 5) {
+                ForEach(0..<16, id: \.self) { _ in
+                    Rectangle().fill(.white.opacity(0.12)).frame(width: 6, height: 1)
+                }
+            }
+            .frame(width: 12, height: side)
+            .background(LinearGradient(colors: [Color(white: 0.16), Color(white: 0.06)], startPoint: .leading, endPoint: .trailing))
+            // Plastic glare and edge.
+            LinearGradient(stops: [
+                .init(color: .white.opacity(0.0), location: 0.0),
+                .init(color: .white.opacity(0.16), location: 0.38),
+                .init(color: .white.opacity(0.03), location: 0.52),
+                .init(color: .white.opacity(0.0), location: 1),
+            ], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .allowsHitTesting(false)
+        }
+        .frame(width: side, height: side)
+        .overlay(Rectangle().stroke(.white.opacity(isBlank ? 0 : 0.28), lineWidth: 1))
+        .overlay(Rectangle().stroke(Brand.acid.opacity(isBlank ? 0.7 : 0), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+        .shadow(color: .black.opacity(0.75), radius: 16, y: 10)
     }
 }
 
@@ -364,8 +458,8 @@ private struct Token: View {
 }
 
 private extension View {
-    /// Records leaning back as they move away from the middle of the crate.
-    func crateFlip() -> some View {
+    /// Cases turning away as they leave the middle of the shelf.
+    func shelfTilt() -> some View {
         scrollTransition(.interactive, axis: .horizontal) { content, phase in
             content
                 .rotation3DEffect(.degrees(phase.value * -38), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
