@@ -53,7 +53,8 @@ final class VocalSeparator {
         guard isActive, let stream, jobStream != stream else { return }
         jobStream = stream
         phase = .preparing
-        job = Task.detached(priority: .userInitiated) { [weak self] in
+        // Utility priority: the model must not starve AVPlayer's own audio threads.
+        job = Task.detached(priority: .utility) { [weak self] in
             do {
                 try await SeparationJob.run(source: stream) { progress in
                     Task { @MainActor in
@@ -95,6 +96,10 @@ final class VocalStem: @unchecked Sendable {
         /// Our decode index = tap index + offset.
         var offset: Int?
         var failures = 0
+        /// Correlation of the accepted match, for the on-screen diagnostics.
+        var score: Float = 0
+        /// Times the tap had to jump its read position (seeks, or a timing problem if frequent).
+        var resyncs = 0
     }
 
     init(key: Int, sampleRate: Double, channels: Int, capacity: Int) {
@@ -134,10 +139,23 @@ final class VocalStem: @unchecked Sendable {
 
     fileprivate func takeProbe() -> (start: Int, samples: [Float])? { alignment.withLock { $0.probe } }
 
-    fileprivate func resolve(offset: Int?) {
+    func noteResync() { alignment.withLock { $0.resyncs += 1 } }
+
+    private let speedValue = OSAllocatedUnfairLock(initialState: 0.0)
+    /// Seconds of audio separated per second of work so far (below 1 = slower than playback).
+    var speed: Double { speedValue.withLock { $0 } }
+    func noteSpeed(_ value: Double) { speedValue.withLock { $0 = value } }
+
+    /// Offset, match score and resync count, for the status line.
+    var alignmentInfo: (offset: Int?, score: Float, resyncs: Int) {
+        alignment.withLock { ($0.offset, $0.score, $0.resyncs) }
+    }
+
+    fileprivate func resolve(offset: Int?, score: Float) {
         alignment.withLock { state in
             if let offset {
                 state.offset = offset
+                state.score = score
             } else {
                 // Unclear match (silence, say): try another probe; give up on alignment eventually.
                 state.probe = nil
@@ -155,6 +173,7 @@ enum VocalStems {
     static func key(for url: URL) -> Int { url.absoluteString.hashValue }
 
     static func set(_ stem: VocalStem?) { state.withLock { $0.stem = stem } }
+    static var stem: VocalStem? { state.withLock { $0.stem } }
     static func setGain(_ gain: Float) { state.withLock { $0.gain = gain } }
 
     /// The stem for this stream (if any) and the removal amount 0…1.
@@ -244,6 +263,7 @@ private enum SeparationJob {
         let totalFrames = min((total + fftSize) / hop, (capacity - fftSize) / hop + 1)
         let chunkSamples = (frames - 1) * hop + fftSize
         var chunkStart = 0
+        let started = ContinuousClock.now
 
         while true {
             try Task.checkCancellation()
@@ -259,6 +279,8 @@ private enum SeparationJob {
             let hi = isLast ? count : frames - edge
             try engine.process(input: input, count: count, startFrame: chunkStart, keep: lo..<hi)
             stem.markProcessed(isLast ? capacity : (chunkStart + hi) * hop)
+            let elapsed = (ContinuousClock.now - started) / .seconds(1)
+            stem.noteSpeed(Double((chunkStart + hi) * hop) / sampleRate / max(elapsed, 0.001))
             progress(isLast ? 1 : min(0.99, Double((chunkStart + hi) * hop) / Double(total)))
             align(stem)
             if isLast { break }
@@ -324,7 +346,7 @@ private enum SeparationJob {
             vDSP_svesq(s.baseAddress! + Int(at), 1, &segmentEnergy, vDSP_Length(length))
         }
         let score = peak / max((probeEnergy * segmentEnergy).squareRoot(), 1e-9)
-        stem.resolve(offset: score >= minCorrelation ? lo + Int(at) - probe.start : nil)
+        stem.resolve(offset: score >= minCorrelation ? lo + Int(at) - probe.start : nil, score: score)
     }
 
     /// A local copy of the stream: decrypted lossless files already are; others are downloaded.

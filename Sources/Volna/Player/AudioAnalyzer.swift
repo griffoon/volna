@@ -290,6 +290,9 @@ private final class TapContext {
     private var vocalGain: Float = 0
     /// How much of the output comes from our separated decode instead of AVPlayer, 0…1.
     private var vocalMix: Float = 0
+    /// Where the next callback should read our decode, and for which stem.
+    private var vocalNext: Int?
+    private var vocalStemID: ObjectIdentifier?
     private var filters: [vDSP.Biquad<Float>] = []
     private var filterVersion = -1
     private var scratch = [Float]()
@@ -380,7 +383,20 @@ private final class TapContext {
         // Our decode covers the whole track, so once engaged the tap stays on it: no switching
         // between sources while the model works. Where the vocal isn't separated yet, the vocal
         // simply stays in (gain glides to 0 before that point and back up after it).
-        let source = first + offset
+        // The callback's start time isn't sample-exact (it can be rounded by a few dozen samples),
+        // and reading our decode from a slightly different place each callback puts a click at
+        // every buffer edge. So the read position carries on from the previous callback and only
+        // follows the reported time when it really jumps (a seek).
+        var source = first + offset
+        if vocalStemID == ObjectIdentifier(stem), let next = vocalNext {
+            if abs(source - next) <= Self.vocalResyncThreshold {
+                source = next
+            } else {
+                stem.noteResync()
+            }
+        }
+        vocalStemID = ObjectIdentifier(stem)
+        vocalNext = source + frames
         let decoded = source >= 0 && source + frames <= stem.decoded
         guard decoded else {
             resetVocalRemoval()
@@ -419,11 +435,14 @@ private final class TapContext {
     /// The vocal is only removed this far (samples) ahead of the separated edge, so the removal
     /// fades out before reaching it instead of stopping mid-buffer.
     private static let vocalLookahead = 8192
+    /// A reported position further than this from where the last callback ended is a seek.
+    private static let vocalResyncThreshold = 2048
 
     /// Hands straight back to AVPlayer's audio: without stem data there is nothing to blend with.
     private func resetVocalRemoval() {
         vocalMix = 0
         vocalGain = 0
+        vocalNext = nil
     }
 
     /// Walks the chunk in hops, analysing the window that ends at each hop.

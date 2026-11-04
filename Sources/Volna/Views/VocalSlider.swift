@@ -25,7 +25,25 @@ struct VocalSlider: View {
             .font(Brand.mono(11, weight: .medium))
             .foregroundStyle(statusColor)
             .contentTransition(.numericText())
+
+            if separator.isActive {
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    Text(diagnostics)
+                        .font(Brand.mono(10))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
         }
+    }
+
+    /// Numbers to report when something sounds wrong: separation speed (×, below 1 can't keep
+    /// up), decoder offset in samples, how well it matched (0…1) and read-position jumps.
+    private var diagnostics: String {
+        guard let stem = VocalStems.stem else { return "> диагностика: —" }
+        let info = stem.alignmentInfo
+        let speed = stem.speed > 0 ? String(format: "x%.1f", stem.speed) : "x—"
+        let offset = info.offset.map { "\($0)" } ?? "ищу"
+        return "> \(speed) | сдвиг \(offset) | совп \(String(format: "%.2f", info.score)) | скачков \(info.resyncs)"
     }
 
     private var status: String {
