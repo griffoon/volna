@@ -9,7 +9,7 @@ struct SettingsView: View {
     @AppStorage(HapticBass.storageKey) private var hapticBass = false
     @AppStorage(HapticBass.offsetKey) private var hapticOffset = 0.0
     @AppStorage(KickBounce.storageKey) private var coverBounce = true
-    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
+    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.relief.rawValue
     @AppStorage("tunnelASCII") private var terminalMode = true
     @Environment(PlayerEngine.self) private var player
 

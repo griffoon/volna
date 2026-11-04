@@ -33,6 +33,8 @@ final class Router {
     var waveScrollToTop = 0
     /// Set to open the full player from anywhere; RootView consumes it.
     var playerRequested = false
+    /// The Wave screen sits at its very top: the mini player steps aside there (the tab bar stays).
+    var waveHeroFocused = true
 }
 
 struct DestinationView: View {

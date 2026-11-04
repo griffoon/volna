@@ -212,8 +212,11 @@ struct HomeSections: View {
 
         if let feed = await feed {
             generated = feed.generatedPlaylists.filter { $0.ready != false }.compactMap(\.data)
+            // Yandex sometimes sends the same block twice («нравится поп? а это слышали?»).
+            var seenTitles = Set<String>()
             events = Array(feed.days.flatMap(\.events)
                 .filter { !$0.albums.isEmpty || !$0.tracks.isEmpty || !$0.artists.isEmpty }
+                .filter { seenTitles.insert(($0.title ?? "").lowercased()).inserted }
                 .prefix(Self.maxEvents))
         }
         if let ids = await releaseIDs {

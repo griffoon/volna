@@ -145,10 +145,24 @@ struct Playlist: Decodable, Hashable, Identifiable, Sendable {
     let tracks: [TrackShort]?
     let revision: Int?
     let visibility: String?
+    /// Newer share links use the UUID; older ones the owner login and kind.
+    var playlistUuid: String? = nil
+    var owner: Owner? = nil
+
+    struct Owner: Decodable, Hashable, Sendable {
+        let login: String?
+    }
 
     var id: String { "\(uid.value):\(kind.value)" }
 
     var coverURI: String? { cover?.uri ?? cover?.itemsUri?.first ?? ogImage }
+
+    /// Public link that opens the playlist in the official app or the web player.
+    var shareURL: URL? {
+        if let playlistUuid, !playlistUuid.isEmpty { return URL(string: "https://music.yandex.ru/playlists/\(playlistUuid)") }
+        let owner = owner?.login ?? uid.value
+        return URL(string: "https://music.yandex.ru/users/\(owner)/playlists/\(kind.value)")
+    }
 }
 
 struct PlaylistCover: Decodable, Hashable, Sendable {

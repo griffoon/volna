@@ -52,6 +52,10 @@ struct NowPlayingView: View {
     @Environment(Session.self) private var session
     @State private var showQueue = false
     @State private var showVoice = false
+    @State private var showVolume = false
+    /// Controls tucked away while reading lyrics.
+    @State private var chromeHidden = false
+    @State private var hideTask: Task<Void, Never>?
     @State private var showLyrics = false
     @State private var pickArtist = false
     @Environment(Router.self) private var router
@@ -132,12 +136,35 @@ struct NowPlayingView: View {
                     titleRow
                 }
 
-                TerminalScrubber(elapsed: player.elapsed, duration: player.duration) { player.seek(to: $0) }
-                controls
-                actions
+                // With lyrics open these step aside after a few quiet seconds so the words get
+                // the room; any tap brings them back.
+                VStack(spacing: 22) {
+                    TerminalScrubber(elapsed: player.elapsed, duration: player.duration) { player.seek(to: $0) }
+                    controls
+                    actions
+                }
+                .opacity(chromeHidden ? 0 : 1)
+                .frame(height: chromeHidden ? 0 : nil, alignment: .top)
+                .clipped()
+                .allowsHitTesting(!chromeHidden)
             }
             .padding(.horizontal, 24)
             .foregroundStyle(.white)
+            .contentShape(.rect)
+            .simultaneousGesture(TapGesture().onEnded { revealChrome() })
+            .onChange(of: showLyrics) { revealChrome() }
+    }
+
+    /// Shows the controls again and, while lyrics are open, schedules them to fade out.
+    private func revealChrome() {
+        hideTask?.cancel()
+        if chromeHidden { withAnimation(.spring(duration: 0.4)) { chromeHidden = false } }
+        guard showLyrics else { return }
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, showLyrics else { return }
+            withAnimation(.spring(duration: 0.6)) { chromeHidden = true }
+        }
     }
 
     private var backdrop: some View {
@@ -277,6 +304,10 @@ struct NowPlayingView: View {
                 Spacer()
                 ActionItem(symbol: "list.bullet", label: "очередь", active: false) { Haptics.tick(); showQueue = true }
                 Spacer()
+                ActionItem(symbol: showVolume ? "speaker.wave.3.fill" : "speaker.wave.2", label: "громк.", active: showVolume) {
+                    Haptics.tick(); withAnimation(.spring(duration: 0.4, bounce: 0.2)) { showVolume.toggle() }
+                }
+                Spacer()
                 Menu {
                     sleepMenu
                 } label: {
@@ -287,6 +318,15 @@ struct NowPlayingView: View {
             if showVoice {
                 VocalSlider()
                     .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            if showVolume {
+                HStack(spacing: 12) {
+                    Image(systemName: "speaker.fill").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                    SystemVolumeSlider().frame(height: 34)
+                    Image(systemName: "speaker.wave.3.fill").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                }
+                .padding(.horizontal, 6)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .buttonStyle(.plain)

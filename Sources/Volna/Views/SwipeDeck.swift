@@ -9,6 +9,8 @@ struct CoverDeck: View {
     /// Card side when the deck is wider than its card (the Wave screen): the whole width still
     /// takes swipes, so you can swipe beside the cover too. Nil makes a square deck.
     var cardSize: CGFloat?
+    /// Tap on the cover (the Wave screen opens the full player with it).
+    var onTap: (() -> Void)?
 
     private static let gap: CGFloat = 28
     /// Share of the width (or flick speed) that commits a switch.
@@ -51,6 +53,7 @@ struct CoverDeck: View {
             .contentShape(.rect)
             // Sideways only: vertical swipes fail this at once and go to the page underneath
             // (scrolling the Wave screen, pulling the player down).
+            .onTapGesture { if let onTap { Haptics.tap(); onTap() } }
             .gesture(HorizontalPan(
                 onChanged: { value in
                     // Resist when there is nothing on that side.

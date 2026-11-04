@@ -536,9 +536,59 @@ struct PlaylistView: View {
     @State private var newTitle = ""
     @State private var confirmDelete = false
     @State private var error: String?
+    @State private var showCover = false
+    @State private var coverPage = 0
+    /// The full playlist from the server (has the share UUID and owner login).
+    @State private var full: Playlist?
 
     /// Editing is offered only for the user's own playlists.
     private var isOwn: Bool { playlist.uid.value == session.uid }
+
+    /// What you can do with the playlist, in plain sight under the header:
+    /// like (someone else's) | share | edit (your own).
+    private var playlistActions: some View {
+        HStack(spacing: 8) {
+            if !isOwn {
+                let liked = session.isLiked(playlist: playlist)
+                Button {
+                    liked ? Haptics.tap() : Haptics.success()
+                    Task { await session.toggleLike(playlist: playlist) }
+                } label: {
+                    actionChip(liked ? "в коллекции" : "нравится", liked ? "heart.fill" : "heart", lit: liked)
+                }
+            }
+            if let url = (full ?? playlist).shareURL {
+                ShareLink(item: url, subject: Text(title ?? playlist.title)) {
+                    actionChip("поделиться", "square.and.arrow.up", lit: false)
+                }
+            }
+            if isOwn {
+                Menu {
+                    Button("Переименовать", systemImage: "pencil") {
+                        newTitle = title ?? playlist.title
+                        renaming = true
+                    }
+                    let open = isPublic ?? (playlist.visibility == "public")
+                    Button(open ? "Сделать приватным" : "Сделать публичным", systemImage: open ? "lock" : "globe") {
+                        Task { await setVisibility(!open) }
+                    }
+                    Button("Удалить плейлист", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } label: {
+                    actionChip("изменить", "pencil", lit: false)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func actionChip(_ title: String, _ symbol: String, lit: Bool) -> some View {
+        Label(title, systemImage: symbol)
+            .font(Brand.mono(12, weight: .bold))
+            .foregroundStyle(lit ? Brand.acid : .white)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .contentLayerControl(in: Capsule(), highlighted: lit)
+    }
 
     var body: some View {
         List {
@@ -547,12 +597,14 @@ struct PlaylistView: View {
                     kind: isOwn ? ((isPublic ?? (playlist.visibility == "public")) ? "playlist | public" : "playlist | private") : "playlist",
                     title: title ?? playlist.title,
                     subtitle: "\(tracks.count) трк",
-                    coverURI: playlist.coverURI
+                    coverURI: playlist.coverURI,
+                    onCoverTap: { showCover = true }
                 ) {
                     player.play(tracks)
                 } shuffle: {
                     player.play(tracks.shuffled())
                 }
+                playlistActions
             }
             .terminalRow()
             .listRowSeparator(.hidden)
@@ -600,13 +652,18 @@ struct PlaylistView: View {
         } message: {
             Text("Плейлист пропадёт и в официальном приложении.")
         }
+        .fullScreenCover(isPresented: $showCover) {
+            ArtistPhotoViewer(photos: [playlist.coverURI].compactMap { $0 }, page: $coverPage)
+        }
         .task { await load() }
+        .task { if session.likedPlaylists.isEmpty { await session.loadLikedPlaylists() } }
     }
 
     private func load() async {
         guard let client = session.client else { return }
         do {
             let full = try await client.playlist(uid: playlist.uid.value, kind: playlist.kind.value)
+            self.full = full
             revision = full.revision
             let shorts = full.tracks ?? []
             let embedded = shorts.compactMap(\.track)
@@ -679,6 +736,7 @@ struct AlbumView: View {
         return copy
     }
     @State private var similarArtists: [Artist] = []
+    @State private var showDisc = false
     @State private var error: String?
 
     private var mainArtist: Artist? { album.artists?.first }
@@ -701,6 +759,7 @@ struct AlbumView: View {
                     artistLinks
                     upcomingBanner
                     albumActions
+                    discButton
                 }
             }
             .terminalRow()
@@ -739,6 +798,9 @@ struct AlbumView: View {
             if let error { ErrorBanner(message: error) { Task { await load() } } }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(isPresented: $showDisc) {
+            DiscViewer(cover: album.coverUri, title: album.title, artist: album.artists?.map(\.name).joined(separator: ", ") ?? "")
+        }
         .task { await load() }
     }
 
@@ -833,6 +895,27 @@ struct AlbumView: View {
         .labelStyle(.titleAndIcon)
     }
 
+    /// «Посмотреть диск»: the release as a CD you can open, take out and spin.
+    private var discButton: some View {
+        Button {
+            Haptics.launch()
+            showDisc = true
+        } label: {
+            HStack(spacing: 10) {
+                CDDisc(size: 26, cover: album.coverUri)
+                Text("посмотреть диск")
+                    .font(Brand.mono(13, weight: .heavy))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 46)
+            .contentLayerControl(in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
     private func shelf<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 14) { content() }
@@ -868,6 +951,8 @@ struct CollectionHeader: View {
     let title: String
     let subtitle: String?
     let coverURI: String?
+    /// Tap on the cover, e.g. to look at it full screen.
+    var onCoverTap: (() -> Void)?
     let play: () -> Void
     let shuffle: () -> Void
 
@@ -876,6 +961,8 @@ struct CollectionHeader: View {
             HStack(alignment: .bottom, spacing: 14) {
                 CoverImage(uri: coverURI, size: 400)
                     .frame(width: 128, height: 128)
+                    .contentShape(.rect)
+                    .onTapGesture { if let onCoverTap { Haptics.tap(); onCoverTap() } }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("> type: \(kind)")
                         .font(Brand.mono(11, weight: .medium))

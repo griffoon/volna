@@ -13,6 +13,8 @@ struct ArtistView: View {
     @State private var bioExpanded = false
     @State private var error: String?
     @State private var photoPage = 0
+    /// Colour of the text over the photo: white, or black/grey on light and black-and-white photos.
+    @State private var headerInk: Color = .white
     @State private var showPhotos = false
     @State private var genius: URL?
     /// Genius bio as fetched (English as a rule) and its Russian translation.
@@ -190,6 +192,9 @@ struct ArtistView: View {
         }
         .task { await load() }
         .translationTask(translation) { session in await translate(session) }
+        .task(id: (info?.photos ?? []).indices.contains(photoPage) ? info?.photos[photoPage] : nil) {
+            headerInk = await PhotoInk.color(for: (info?.photos ?? []).indices.contains(photoPage) ? info?.photos[photoPage] : nil)
+        }
     }
 
     private static func compact(_ n: Int) -> String {
@@ -213,12 +218,13 @@ struct ArtistView: View {
                     }
                 }
                 .font(Brand.mono(12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(headerInk.opacity(0.8))
+                .animation(.easeInOut(duration: 0.3), value: headerInk)
                 .labelStyle(.titleAndIcon)
                 HStack(alignment: .bottom) {
                     Text(info?.artist.name ?? name)
                         .font(Brand.display(38))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(headerInk)
                         .lineLimit(2)
                         .minimumScaleFactor(0.5)
                     Spacer(minLength: 8)

@@ -126,3 +126,31 @@ struct ArtistPhotoViewer: View {
         .preferredColorScheme(.dark)
     }
 }
+
+/// Picks the colour for text laid over an artist photo, without adding a backing plate:
+/// white on dark photos, black on very light ones, grey on black-and-white ones.
+enum PhotoInk {
+    /// `from`…`to` is the vertical band (0 = top, 1 = bottom) where the text sits.
+    static func color(for uri: String?, from: Double = 0.55, to: Double = 0.85) async -> Color {
+        guard let image = await CoverPixels.load(uri, side: 64) else { return .white }
+        var luminance = 0.0, saturation = 0.0, count = 0.0
+        let rows = Int(Double(image.height) * from)..<Int(Double(image.height) * to)
+        for y in rows {
+            // The header darkens the photo towards the bottom (gradient from the middle down).
+            let shade = max(0, (Double(y) / Double(image.height) - 0.5) / 0.5)
+            for x in 0..<image.width {
+                let i = (y * image.width + x) * 4
+                let r = Double(image.bytes[i]) / 255, g = Double(image.bytes[i + 1]) / 255, b = Double(image.bytes[i + 2]) / 255
+                let maxC = max(r, g, b), minC = min(r, g, b)
+                luminance += (0.2126 * r + 0.7152 * g + 0.0722 * b) * (1 - shade * 0.85)
+                saturation += maxC > 0 ? (maxC - minC) / maxC : 0
+                count += 1
+            }
+        }
+        guard count > 0 else { return .white }
+        let light = luminance / count, colourful = saturation / count
+        if light > 0.58 { return .black }
+        if colourful < 0.1, light > 0.34 { return Color(white: 0.28) }
+        return .white
+    }
+}

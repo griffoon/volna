@@ -6,7 +6,7 @@ struct WaveView: View {
     @Environment(Session.self) private var session
     @Environment(Router.self) private var router
     @AppStorage("tunnelASCII") private var ascii = true
-    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.smoke.rawValue
+    @AppStorage(VisualizerEffect.storageKey) private var effectRaw = VisualizerEffect.relief.rawValue
     @State private var toast: String?
     @State private var characters: [WaveSettings.Option] = []
     @State private var characterSeeds: Set<String> = []
@@ -18,12 +18,15 @@ struct WaveView: View {
     @State private var scroll = ScrollPosition(edge: .top)
     /// The feed below the hero shows only once you've started scrolling.
     @State private var feedShown = false
+    /// Full-screen «режим покоя» with the clock at the bottom.
+    @State private var showIdle = false
 
-    private static let miniPlayerHeight: CGFloat = 62
+    /// Small gap kept above the bottom bars; the mini player itself hides while the hero is up.
+    private static let miniPlayerHeight: CGFloat = 4
     /// Three mono lines of the collapsed HUD plus its padding.
     private static let hudHeight: CGFloat = 70
-    /// From the very top of the screen: just below the Dynamic Island, inside the status bar.
-    private static let islandLabelTop: CGFloat = 49
+    /// From the very top of the screen: the Dynamic Island's own spot.
+    private static let islandLabelTop: CGFloat = 13
 
     private var scrollHint: some View {
         VStack(spacing: 2) {
@@ -58,7 +61,7 @@ struct WaveView: View {
 
                 CoverVisualizer(coverURI: player.current?.cover, ascii: ascii, isPlaying: player.isPlaying,
                                 active: heroVisible, accent: Theme.shared.accentRGB,
-                                effect: VisualizerEffect(rawValue: effectRaw) ?? .smoke,
+                                effect: VisualizerEffect(rawValue: effectRaw) ?? .relief,
                                 palette: Theme.shared.smokePalette)
                     .ignoresSafeArea()
                     // Fully hidden once the feed covers the screen, so it can't peek out at the bottom.
@@ -135,6 +138,7 @@ struct WaveView: View {
                     geo.contentOffset.y + geo.contentInsets.top > 12
                 } action: { _, scrolled in
                     feedShown = scrolled
+                    withAnimation(.snappy) { router.waveHeroFocused = !scrolled }
                 }
                 .onChange(of: router.waveScrollToTop) {
                     Haptics.tick()
@@ -167,16 +171,17 @@ struct WaveView: View {
                         .transition(.opacity)
                 }
             }
-            // The screen's name lives up in the status bar, right under the Dynamic Island.
+            // The screen's name sits exactly where the Dynamic Island is: on the phone the island
+            // covers it, it only shows on screenshots (the way Yandex Market signs its app).
             .overlay {
                 VStack {
                     Text("волна")
-                        .font(Brand.display(12))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .font(Brand.display(15))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 18)
+                        .frame(height: 34)
+                        .background(Color(white: 0.22), in: .capsule)
                         .padding(.top, Self.islandLabelTop)
-                        // Only on the hero; it would sit over the feed once you scroll.
-                        .opacity(feedShown ? 0 : 1)
-                        .animation(.easeInOut(duration: 0.2), value: feedShown)
                     Spacer()
                 }
                 .ignoresSafeArea()
@@ -184,29 +189,37 @@ struct WaveView: View {
             }
             .toolbar {
                 // My Wave lives top-left: start it, and tune it right next to it.
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    // Words, not just icons: what each button does is obvious at a glance.
+                ToolbarItem(placement: .topBarLeading) {
+                    // A real word on the button: toolbar Labels collapse to their icon, so this
+                    // is drawn by hand.
                     Button {
                         Haptics.launch()
                         player.startWave()
                         flash("> моя волна")
                     } label: {
-                        Label("волна", systemImage: isMyWave ? "waveform" : "play.fill")
-                            .labelStyle(.titleAndIcon)
-                            .font(Brand.mono(13, weight: .heavy))
+                        HStack(spacing: 6) {
+                            Image(systemName: isMyWave ? "waveform" : "dot.radiowaves.left.and.right")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("моя волна")
+                                .font(Brand.mono(13, weight: .heavy))
+                                .fixedSize()
+                        }
+                        .foregroundStyle(isMyWave ? Brand.acid : .white)
+                        .padding(.horizontal, 6)
                     }
-                    .tint(isMyWave ? Brand.acid : .white)
                     .accessibilityLabel("Запустить Мою волну")
-                    Button {
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Настроить волну", systemImage: "slider.horizontal.3") {
                         Haptics.tap()
                         router.destination = .waveSettings
-                    } label: {
-                        Label("настроить", systemImage: "slider.horizontal.3")
-                            .labelStyle(.titleAndIcon)
-                            .font(Brand.mono(13, weight: .bold))
                     }
-                    .tint(.white)
-                    .accessibilityLabel("Настроить Мою волну")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Режим покоя", systemImage: "rectangle.expand.diagonal") {
+                        Haptics.thump()
+                        showIdle = true
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Устройства", systemImage: Ynison.shared.snapshot.devices.isEmpty ? "hifispeaker" : "hifispeaker.2.fill") {
@@ -220,6 +233,7 @@ struct WaveView: View {
                     }
                 }
             }
+            .fullScreenCover(isPresented: $showIdle) { IdleView() }
             .task {
                 await loadCharacters()
                 await loadLastWave()
@@ -338,7 +352,7 @@ struct WaveView: View {
             if let track = player.current, hasTrack {
                 // Same card as in the player: swipe sideways anywhere on this row (beside the cover
                 // too) to switch; vertical drags scroll the page.
-                CoverDeck(cardSize: cover)
+                CoverDeck(cardSize: cover, onTap: { router.playerRequested = true })
                     .frame(maxWidth: .infinity)
                     .overlay(alignment: .bottom) {
                         ClipBadge(track: track).offset(y: 14)

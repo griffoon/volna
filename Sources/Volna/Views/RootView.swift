@@ -44,7 +44,7 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .modifier(MiniPlayerAccessory(visible: player.current != nil) {
+        .modifier(MiniPlayerAccessory(visible: player.current != nil && !(tab == .wave && router.waveHeroFocused)) {
             MiniPlayer { showPlayer = true }
                 .matchedTransitionSource(id: "player", in: playerZoom)
         })

@@ -451,6 +451,24 @@ struct YMClient: Sendable {
         let _: AnyDecodable = try await post("users/\(uid)/likes/artists/\(action)", form: ["artist-ids": artistID])
     }
 
+    /// Liked playlists as "ownerUid:kind", the same shape as `Playlist.id`.
+    func likedPlaylistIDs(uid: String) async throws -> [String] {
+        struct Like: Decodable {
+            struct Ref: Decodable { let uid: FlexibleID?; let kind: FlexibleID? }
+            let playlist: Ref?
+        }
+        let likes: [Lenient<Like>] = try await get("users/\(uid)/likes/playlists")
+        return likes.compactMap { like in
+            guard let ref = like.value?.playlist, let owner = ref.uid?.value, let kind = ref.kind?.value else { return nil }
+            return "\(owner):\(kind)"
+        }
+    }
+
+    func setPlaylistLike(_ liked: Bool, playlistID: String, uid: String) async throws {
+        let action = liked ? "add-multiple" : "remove"
+        let _: AnyDecodable = try await post("users/\(uid)/likes/playlists/\(action)", form: ["playlist-ids": playlistID])
+    }
+
     func setAlbumLike(_ liked: Bool, albumID: String, uid: String) async throws {
         let action = liked ? "add-multiple" : "remove"
         let _: AnyDecodable = try await post("users/\(uid)/likes/albums/\(action)", form: ["album-ids": albumID])
