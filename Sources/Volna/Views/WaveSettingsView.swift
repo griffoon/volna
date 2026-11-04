@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Tuning My Wave on one screen. Our living visualizer glows behind; the headline says what wave
 /// you'll get; three glass drums (mood, character, language) spin sideways under your thumb and
-/// whatever lands in the lit glass window is picked. Activity waves sit below as glass chips.
+/// whatever lands in the lit window is picked. Activity waves sit below as chips.
 struct WaveSettingsView: View {
     @Environment(Session.self) private var session
     @Environment(PlayerEngine.self) private var player
@@ -30,7 +30,7 @@ struct WaveSettingsView: View {
                 headline
                 Spacer(minLength: 12)
                 if let settings {
-                    GlassEffectContainer(spacing: 18) {
+                    Group {
                         VStack(spacing: 22) {
                             ForEach(rows(settings), id: \.key) { row in
                                 SettingDrum(title: row.title, options: row.options,
@@ -125,7 +125,7 @@ struct WaveSettingsView: View {
                     .foregroundStyle(.white.opacity(0.5))
                     .padding(.horizontal, 4)
                 ScrollView(.horizontal) {
-                    GlassEffectContainer(spacing: 8) {
+                    Group {
                         HStack(spacing: 8) {
                             ForEach(stations, id: \.self) { station in
                                 Button {
@@ -138,7 +138,7 @@ struct WaveSettingsView: View {
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 14)
                                         .frame(height: 40)
-                                        .glassEffect(.regular.interactive(), in: .capsule)
+                                        .contentLayerControl(in: Capsule())
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -213,7 +213,7 @@ struct WaveSettingsView: View {
     }
 }
 
-/// One setting as a sideways drum: options slide under a lit Liquid Glass window in the middle;
+/// One setting as a sideways drum: options slide under a lit window in the middle;
 /// what stops in the window is the pick. «любое» is always the first stop.
 private struct SettingDrum: View {
     let title: String
@@ -242,8 +242,9 @@ private struct SettingDrum: View {
                     Capsule()
                         .fill(.clear)
                         .frame(width: Self.slot, height: 48)
-                        .glassEffect(.regular.tint(Brand.acid.opacity(0.22)), in: .capsule)
-                        .overlay(Capsule().stroke(Brand.acid.opacity(0.7), lineWidth: 1))
+                        .contentLayerControl(in: Capsule(), highlighted: true)
+                        .background(Brand.acid.opacity(0.14), in: .capsule)
+
                     ScrollView(.horizontal) {
                         HStack(spacing: 0) {
                             ForEach(-1..<options.count, id: \.self) { index in

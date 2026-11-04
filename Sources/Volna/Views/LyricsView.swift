@@ -53,14 +53,26 @@ struct LyricsView: View {
                         ForEach(lines) { line in
                             let index = line.id
                             let end = lines.indices.contains(index + 1) ? lines[index + 1].time : line.time + 5
-                            LyricLineView(
-                                line: line,
-                                state: lineState(index, active: active),
-                                progress: progress(start: line.time, end: end, now: now),
-                                blur: userScrolling ? 0 : blur(index, active: active)
-                            )
+                            // A real button: taps inside a scroll view reach it reliably, and after
+                            // jumping, the lyrics follow the song again right away.
+                            Button {
+                                Haptics.tick()
+                                player.seek(to: line.time)
+                                resumeTask?.cancel()
+                                withAnimation(.spring(duration: 0.5)) {
+                                    userScrolling = false
+                                    proxy.scrollTo(index, anchor: UnitPoint(x: 0, y: 0.28))
+                                }
+                            } label: {
+                                LyricLineView(
+                                    line: line,
+                                    state: lineState(index, active: active),
+                                    progress: progress(start: line.time, end: end, now: now),
+                                    blur: userScrolling ? 0 : blur(index, active: active)
+                                )
+                            }
+                            .buttonStyle(.plain)
                             .id(index)
-                            .onTapGesture { Haptics.tick(); player.seek(to: line.time) }
                         }
                         credits
                     }
@@ -157,36 +169,30 @@ private struct LyricLineView: View {
     }
 
     private var text: some View {
-        Text(line.text)
+        Text(state == .active ? swept : AttributedString(line.text))
             .font(.system(size: 30, weight: .bold, design: .default))
             .foregroundStyle(.white.opacity(state == .past ? 0.45 : 0.3))
-            .overlay(alignment: .leading) {
-                if state == .active {
-                    Text(line.text)
-                        .font(.system(size: 30, weight: .bold, design: .default))
-                        .foregroundStyle(.white)
-                        .shadow(color: .white.opacity(0.5), radius: 8)
-                        .mask(alignment: .leading) { sweepMask }
-                }
-            }
+            .shadow(color: .white.opacity(state == .active ? 0.25 : 0), radius: 8)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Soft-edged gradient that slides left to right with line progress.
-    private var sweepMask: some View {
-        GeometryReader { geo in
-            let edge = 0.12
-            let position = progress * (1 + edge)
-            LinearGradient(
-                stops: [
-                    .init(color: .black, location: max(0, position - edge)),
-                    .init(color: .clear, location: min(1, max(position, 0.0001))),
-                ],
-                startPoint: .leading, endPoint: .trailing
-            )
-            .frame(width: geo.size.width, height: geo.size.height)
+    /// The fill goes through the text in reading order, character by character, so a line that
+    /// wraps lights up its first row before the second (a left-to-right mask lit both at once).
+    /// A few characters of soft edge keep it from looking like a typewriter.
+    private var swept: AttributedString {
+        var result = AttributedString()
+        let characters = Array(line.text)
+        let lit = progress * Double(characters.count + Self.softEdge)
+        for (index, character) in characters.enumerated() {
+            var piece = AttributedString(String(character))
+            let amount = min(max((lit - Double(index)) / Double(Self.softEdge), 0), 1)
+            piece.foregroundColor = .white.opacity(0.3 + 0.7 * amount)
+            result += piece
         }
+        return result
     }
+
+    private static let softEdge = 4
 }
 
 /// Three pulsing notes shown during instrumental breaks.

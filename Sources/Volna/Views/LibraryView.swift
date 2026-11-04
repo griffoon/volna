@@ -357,7 +357,7 @@ struct CDJewel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .leading) {
-                CDDisc(size: Self.disc)
+                CDDisc(size: Self.disc, cover: cover)
                     .offset(x: Self.side - Self.disc / 2 - 14 + Self.peek / 2)
                     .rotationEffect(.degrees(-8))
                 jewelCase
@@ -421,19 +421,32 @@ struct CDJewel: View {
 /// The disc itself, data side up: silver with rainbow interference rings, the clear hub and the hole.
 struct CDDisc: View {
     let size: CGFloat
+    /// Printed on the disc's face; without it the bare silver data side shows.
+    var cover: String?
 
     var body: some View {
         ZStack {
+            // Silver with a rainbow sheen; on a printed disc only a thin outer rim of it shows.
             Circle().fill(AngularGradient(colors: [
                 Color(white: 0.82), Color(red: 0.62, green: 0.82, blue: 1.0), Color(red: 0.75, green: 1.0, blue: 0.75),
                 Color(white: 0.92), Color(red: 1.0, green: 0.72, blue: 0.85), Color(red: 1.0, green: 0.95, blue: 0.65),
                 Color(white: 0.78), Color(red: 0.62, green: 0.82, blue: 1.0), Color(white: 0.82),
             ], center: .center, angle: .degrees(20)))
-            // Fine grooves.
-            ForEach(0..<7, id: \.self) { ring in
+            if let cover {
+                CoverImage(uri: cover, size: 300, corner: 0)
+                    .frame(width: size * 0.93, height: size * 0.93)
+                    .clipShape(.circle)
+                // A soft sheen across the print so it reads as a shiny disc, not a flat picture.
                 Circle()
-                    .stroke(.white.opacity(ring.isMultiple(of: 2) ? 0.25 : 0.1), lineWidth: 0.6)
-                    .padding(size * (0.06 + CGFloat(ring) * 0.045))
+                    .fill(AngularGradient(colors: [.white.opacity(0.0), .white.opacity(0.22), .white.opacity(0.0),
+                                                   .white.opacity(0.12), .white.opacity(0.0)], center: .center))
+                    .frame(width: size * 0.93, height: size * 0.93)
+            } else {
+                ForEach(0..<7, id: \.self) { ring in
+                    Circle()
+                        .stroke(.white.opacity(ring.isMultiple(of: 2) ? 0.25 : 0.1), lineWidth: 0.6)
+                        .padding(size * (0.06 + CGFloat(ring) * 0.045))
+                }
             }
             // Clear hub: a see-through ring around the hole.
             Circle().fill(Color(white: 0.6).opacity(0.35)).frame(width: size * 0.34, height: size * 0.34)

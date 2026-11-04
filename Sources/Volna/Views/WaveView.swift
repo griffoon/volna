@@ -20,6 +20,8 @@ struct WaveView: View {
     @State private var feedShown = false
 
     private static let miniPlayerHeight: CGFloat = 62
+    /// Three mono lines of the collapsed HUD plus its padding.
+    private static let hudHeight: CGFloat = 70
     /// From the very top of the screen: just below the Dynamic Island, inside the status bar.
     private static let islandLabelTop: CGFloat = 49
 
@@ -83,7 +85,12 @@ struct WaveView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(spacing: 0) {
-                            hud
+                            // The collapsed HUD's room is reserved; when its log opens it grows over
+                            // the screen instead of pushing everything up under the status bar.
+                            Color.clear
+                                .frame(height: Self.hudHeight)
+                                .overlay(alignment: .topLeading) { hud.zIndex(1) }
+                                .zIndex(1)
                             Spacer(minLength: 8)
                             center(available: available)
                             Spacer(minLength: 8)
@@ -98,11 +105,6 @@ struct WaveView: View {
 
                         HomeSections()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            // Tucked away (behind the bars) while the screen sits at the top, slides
-                            // up into view as soon as you start scrolling towards it.
-                            .opacity(feedShown ? 1 : 0)
-                            .offset(y: feedShown ? 0 : 40)
-                            .animation(.spring(duration: 0.45, bounce: 0.15), value: feedShown)
                             // Solid black under the whole feed, with a fade sitting just above it so the
                             // visualizer melts into the feed instead of showing through a gap.
                             .background(Brand.ink)
@@ -112,6 +114,11 @@ struct WaveView: View {
                                     .offset(y: -140)
                                     .allowsHitTesting(false)
                             }
+                            // Tucked away (with its background, so it can't cut the visualizer off)
+                            // while the screen sits at the top; slides up as soon as you scroll.
+                            .opacity(feedShown ? 1 : 0)
+                            .offset(y: feedShown ? 0 : 40)
+                            .animation(.spring(duration: 0.45, bounce: 0.15), value: feedShown)
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -167,6 +174,9 @@ struct WaveView: View {
                         .font(Brand.display(12))
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(.top, Self.islandLabelTop)
+                        // Only on the hero; it would sit over the feed once you scroll.
+                        .opacity(feedShown ? 0 : 1)
+                        .animation(.easeInOut(duration: 0.2), value: feedShown)
                     Spacer()
                 }
                 .ignoresSafeArea()
@@ -175,16 +185,28 @@ struct WaveView: View {
             .toolbar {
                 // My Wave lives top-left: start it, and tune it right next to it.
                 ToolbarItemGroup(placement: .topBarLeading) {
-                    Button("Моя волна", systemImage: "dot.radiowaves.left.and.right") {
+                    // Words, not just icons: what each button does is obvious at a glance.
+                    Button {
                         Haptics.launch()
                         player.startWave()
                         flash("> моя волна")
+                    } label: {
+                        Label("волна", systemImage: isMyWave ? "waveform" : "play.fill")
+                            .labelStyle(.titleAndIcon)
+                            .font(Brand.mono(13, weight: .heavy))
                     }
                     .tint(isMyWave ? Brand.acid : .white)
-                    Button("Настроить волну", systemImage: "dial.medium") {
+                    .accessibilityLabel("Запустить Мою волну")
+                    Button {
                         Haptics.tap()
                         router.destination = .waveSettings
+                    } label: {
+                        Label("настроить", systemImage: "slider.horizontal.3")
+                            .labelStyle(.titleAndIcon)
+                            .font(Brand.mono(13, weight: .bold))
                     }
+                    .tint(.white)
+                    .accessibilityLabel("Настроить Мою волну")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Устройства", systemImage: Ynison.shared.snapshot.devices.isEmpty ? "hifispeaker" : "hifispeaker.2.fill") {
@@ -472,8 +494,18 @@ struct RoundGlassLabel: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(.circle)
-            .background(.black.opacity(0.28), in: .circle)
-            .glassEffect(.clear.interactive(), in: .circle)
+            .contentLayerControl(in: Circle())
+    }
+}
+
+extension View {
+    /// Controls that sit in the content (track buttons, chips, the scrubber) use a standard thin
+    /// material, not Liquid Glass: Apple keeps glass for the floating navigation layer (tab bar,
+    /// toolbars, mini player), and glass over the busy visualizer warped into blobs.
+    func contentLayerControl<S: Shape>(in shape: S, highlighted: Bool = false) -> some View {
+        background(.ultraThinMaterial.opacity(0.9), in: shape)
+            .background(.black.opacity(0.35), in: shape)
+            .overlay(shape.stroke(highlighted ? Brand.acid : .white.opacity(0.18), lineWidth: 1))
     }
 }
 

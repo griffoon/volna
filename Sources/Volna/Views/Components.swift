@@ -236,7 +236,7 @@ struct ErrorBanner: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Повторить", action: retry).buttonStyle(.glass)
+            Button("Повторить", action: retry).buttonStyle(.bordered)
         }
     }
 }

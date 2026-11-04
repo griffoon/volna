@@ -68,8 +68,8 @@ struct HomeSections: View {
 
             ForEach(events) { event in
                 if !event.albums.isEmpty {
-                    shelf(event.title?.lowercased() ?? "новое у твоих артистов", open: {
-                        ShelfGridView(title: event.title ?? "Новое у твоих артистов", items: event.albums) { album in
+                    shelf(Self.informal(event.title)?.lowercased() ?? "новое у твоих артистов", open: {
+                        ShelfGridView(title: Self.informal(event.title) ?? "Новое у твоих артистов", items: event.albums) { album in
                             NavigationLink { AlbumView(album: album) } label: { AlbumCard(album: album) }
                         }
                     }) {
@@ -78,11 +78,11 @@ struct HomeSections: View {
                         }
                     }
                 } else if !event.tracks.isEmpty {
-                    trackBlock(event.title?.lowercased() ?? "для тебя", tracks: Array(event.tracks.prefix(5)),
-                               open: { ShelfTracksView(title: event.title ?? "Для тебя", tracks: event.tracks) })
+                    trackBlock(Self.informal(event.title)?.lowercased() ?? "для тебя", tracks: Array(event.tracks.prefix(5)),
+                               open: { ShelfTracksView(title: Self.informal(event.title) ?? "Для тебя", tracks: event.tracks) })
                 } else if !event.artists.isEmpty {
-                    shelf(event.title?.lowercased() ?? "артисты", open: {
-                        ShelfGridView(title: event.title ?? "Артисты", items: event.artists.compactMap(\.artist)) { artist in
+                    shelf(Self.informal(event.title)?.lowercased() ?? "артисты", open: {
+                        ShelfGridView(title: Self.informal(event.title) ?? "Артисты", items: event.artists.compactMap(\.artist)) { artist in
                             NavigationLink { ArtistView(artistID: artist.id.value, name: artist.name) } label: { ArtistCard(artist: artist) }
                         }
                     }) {
@@ -304,5 +304,28 @@ struct ArtistCard: View {
                 .lineLimit(1)
         }
         .frame(width: 110)
+    }
+}
+
+extension HomeSections {
+    /// Yandex titles mix «вы» and «ты» («вы ещё не слушали», «а это слышали?») while the rest of the
+    /// app speaks informally; this brings them to one voice: «ты ещё не слушал», «а это слышал?».
+    static func informal(_ title: String?) -> String? {
+        guard var text = title else { return nil }
+        let swaps: [(String, String)] = [
+            ("вы", "ты"), ("Вы", "Ты"), ("вам", "тебе"), ("Вам", "Тебе"), ("вас", "тебя"), ("Вас", "Тебя"),
+            ("ваш", "твой"), ("ваша", "твоя"), ("ваше", "твоё"), ("ваши", "твои"), ("вашей", "твоей"),
+            ("ваших", "твоих"), ("вашим", "твоим"), ("вашего", "твоего"),
+            ("слушали", "слушал"), ("слышали", "слышал"), ("знали", "знал"), ("видели", "видел"),
+            ("пропустили", "пропустил"), ("искали", "искал"), ("любите", "любишь"), ("слушаете", "слушаешь"),
+            ("цените", "ценишь"), ("оцените", "оцени"), ("послушайте", "послушай"), ("попробуйте", "попробуй"),
+            ("откройте", "открой"), ("включите", "включи"),
+        ]
+        for (formal, casual) in swaps {
+            // Whole words only, so «вы» inside «новый» stays put.
+            let pattern = #"(?<![\p{L}])"# + NSRegularExpression.escapedPattern(for: formal) + #"(?![\p{L}])"#
+            text = text.replacingOccurrences(of: pattern, with: casual, options: .regularExpression)
+        }
+        return text
     }
 }

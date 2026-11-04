@@ -53,7 +53,7 @@ extension TransportGlyph {
     }
 }
 
-/// Previous / next as a Liquid Glass ring with our glyph inside.
+/// Previous / next: our glyph in a material ring.
 struct GlassTransportButton: View {
     let kind: TransportGlyph.Kind
     var size: CGFloat = 60
@@ -65,8 +65,7 @@ struct GlassTransportButton: View {
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
                 .contentShape(.circle)
-                .background(.black.opacity(0.28), in: .circle)
-                .glassEffect(.clear.interactive(), in: .circle)
+                .contentLayerControl(in: Circle())
         }
         .buttonStyle(.plain)
     }
