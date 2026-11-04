@@ -97,6 +97,14 @@ swift sdk list   # должен появиться darwin
 
 ### Собрать IPA
 
+Сначала, один раз, модель для ползунка «голос». Скрипт скачивает [UVR MDX-Net Kim Vocal 2](https://github.com/TRvlvr/model_repo) и конвертирует её в Core ML. Лицензия на веса не указана, поэтому в репозитории их нет:
+
+```bash
+bash tools/convert_vocal_model.sh
+```
+
+Потом сама сборка:
+
 ```bash
 bash build.sh
 ```

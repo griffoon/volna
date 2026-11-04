@@ -9,3 +9,5 @@ DerivedData/
 /xtool
 *.ipa
 /SideStore-Madeira-Kit
+# Vocal model weights (no stated license); built by tools/convert_vocal_model.sh
+/Sources/Volna/Resources/VocalModel

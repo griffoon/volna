@@ -18,9 +18,8 @@ let package = Package(
                 .copy("Resources/DelaGothicOne-Regular.ttf"),
                 .copy("Resources/OFL-DelaGothicOne.txt"),
                 // Core ML package shipped as a plain folder and compiled on the device
-                // (see VocalSeparator); built by tools/convert_vocal_model.sh.
+                // (see VocalSeparator). Not in git: run tools/convert_vocal_model.sh first.
                 .copy("Resources/VocalModel"),
-                .copy("Resources/LICENSE-OpenUnmix.txt"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

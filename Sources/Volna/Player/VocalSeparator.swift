@@ -4,7 +4,7 @@ import CoreML
 import Observation
 import os
 
-/// «Голос», like Apple Music Sing: an on-device model (Open-Unmix) splits the current track into
+/// «Голос», like Apple Music Sing: an on-device model (UVR MDX-Net) splits the current track into
 /// vocals and the rest, ahead of the playhead, and the audio tap subtracts as much of the vocal
 /// as the slider asks for. The vocal is kept as a time-domain stem aligned to the stream's samples.
 @MainActor
@@ -134,14 +134,16 @@ enum SeparationError: LocalizedError {
 
 /// Decodes the stream, runs the model chunk by chunk and writes the vocal stem.
 private enum SeparationJob {
-    static let fftSize = 4096
+    // UVR MDX-Net "Kim Vocal 2": n_fft 7680, hop 1024, the lowest 3072 bins, 256 frames per call.
+    static let fftSize = 7680
     static let hop = 1024
-    static let bins = fftSize / 2 + 1
+    static let modelBins = 3072
     /// Model input length in STFT frames (fixed when the model was converted).
     static let frames = 256
-    /// Frames dropped at each chunk edge so the recurrent model always has context.
+    /// Frames dropped at each chunk edge so the model always has context on both sides.
     static let edge = 16
-    private static let log2n = vDSP_Length(12)
+    /// UVR's per-model gain correction for the vocal estimate.
+    static let compensate: Float = 1.009
 
     static func run(source: StreamSource, progress: @escaping @Sendable (Double) -> Void) async throws {
         let model = try await VocalModel.load()
@@ -175,7 +177,7 @@ private enum SeparationJob {
                              channels: channels, capacity: capacity)
         VocalStems.set(stem)
 
-        let engine = ChunkEngine(model: model, stem: stem)
+        let engine = try ChunkEngine(model: model, stem: stem)
         var pending = [[Float]](repeating: [], count: channels)
         var pendingStart = 0
         var chunkStart = 0
@@ -255,128 +257,189 @@ private enum SeparationJob {
         return target
     }
 
-    /// STFT → model mask → masked inverse STFT, overlap-added into the stem.
+    /// STFT → model (vocal spectrum) → strengthened vocal mask → masked inverse STFT,
+    /// overlap-added into the stem.
     private final class ChunkEngine {
+        private static let half = SeparationJob.fftSize / 2
+        // Mask shaping. The model's estimate is conservative, so for karaoke it is pushed up a bit
+        // and allowed to linger after the voice so reverb and delay tails go with it.
+        /// Over-subtraction: the vocal estimate counts this much more than it says.
+        private static let overSubtract: Float = 1.12
+        /// < 1 lifts uncertain (mid) mask values, where reverb and breathy parts sit.
+        private static let lift: Float = 0.75
+        /// How long the removal lingers after the voice (seconds, 1/e decay).
+        private static let tailSeconds: Float = 0.35
+        /// Share of the lingering mask that is applied.
+        private static let tailAmount: Float = 0.75
+        /// A bin whose level jumps by this factor starts a new note: its tail is dropped so a
+        /// fresh instrument hit after a vocal phrase isn't carved out.
+        private static let onsetRatio: Float = 1.6
+
         private let model: MLModel
         private let stem: VocalStem
-        private let fft = vDSP.FFT(log2n: SeparationJob.log2n, radix: .radix2, ofType: DSPSplitComplex.self)!
-        private let window = vDSP.window(ofType: Float.self, usingSequence: .hanningDenormalized,
-                                         count: SeparationJob.fftSize, isHalfWindow: false)
-        /// Packed spectra per channel and frame: real and imaginary halves of `fftSize / 2`.
+        private let forward: vDSP.DFT<Float>
+        private let inverse: vDSP.DFT<Float>
+        /// vDSP's DFTs are unnormalised and differ from the textbook one by fixed factors;
+        /// measured once instead of trusting constants.
+        private let forwardScale: Float
+        private let roundTripScale: Float
+        private let window: [Float]
+        /// Synthesis window already divided by the overlap sum of window², per position.
+        private let synthesis: [Float]
+        private let tailDecay: Float
+
+        /// Packed spectra per channel and frame (vDSP layout: re[0] = DC, im[0] = Nyquist).
         private var real: [[Float]]
         private var imag: [[Float]]
-        private var frame = [Float](repeating: 0, count: SeparationJob.fftSize)
+        /// Mask carried between frames (and chunks) per channel and bin, and last frame's level.
+        private var hold: [[Float]]
+        private var lastLevel: [[Float]]
+        private var even = [Float](repeating: 0, count: ChunkEngine.half)
+        private var odd = [Float](repeating: 0, count: ChunkEngine.half)
+        private var outRe = [Float](repeating: 0, count: ChunkEngine.half)
+        private var outIm = [Float](repeating: 0, count: ChunkEngine.half)
 
-        init(model: MLModel, stem: VocalStem) {
+        init(model: MLModel, stem: VocalStem) throws {
+            let n = SeparationJob.fftSize
+            guard let forward = vDSP.DFT(count: n, direction: .forward, transformType: .complexReal, ofType: Float.self),
+                  let inverse = vDSP.DFT(count: n, direction: .inverse, transformType: .complexReal, ofType: Float.self)
+            else { throw SeparationError.noModel }
             self.model = model
             self.stem = stem
-            let size = SeparationJob.frames * SeparationJob.fftSize / 2
+            self.forward = forward
+            self.inverse = inverse
+
+            // Periodic Hann, as torch.hann_window(periodic=True) used in training.
+            let hann = (0..<n).map { 0.5 - 0.5 * cos(2 * Float.pi * Float($0) / Float(n)) }
+            let hop = SeparationJob.hop
+            var overlap = [Float](repeating: 0, count: hop)
+            for i in 0..<n { overlap[i % hop] += hann[i] * hann[i] }
+            window = hann
+            synthesis = (0..<n).map { hann[$0] / max(overlap[$0 % hop], 1e-6) }
+            tailDecay = exp(-Float(hop) / (Float(stem.sampleRate) * Self.tailSeconds))
+
+            // Calibrate: the DC bin of a known signal gives the forward factor, a round trip the rest.
+            let probe = (0..<n).map { sin(Float($0) * 0.37) + 0.5 }
+            let probeEven = stride(from: 0, to: n, by: 2).map { probe[$0] }
+            let probeOdd = stride(from: 1, to: n, by: 2).map { probe[$0] }
+            var re = [Float](repeating: 0, count: n / 2), im = re
+            forward.transform(inputReal: probeEven, inputImaginary: probeOdd, outputReal: &re, outputImaginary: &im)
+            forwardScale = re[0] / probe.reduce(0, +)
+            var backEven = [Float](repeating: 0, count: n / 2), backOdd = backEven
+            inverse.transform(inputReal: re, inputImaginary: im, outputReal: &backEven, outputImaginary: &backOdd)
+            roundTripScale = (backEven.map(abs).reduce(0, +) + backOdd.map(abs).reduce(0, +)) / probe.map(abs).reduce(0, +)
+
+            let size = SeparationJob.frames * Self.half
             real = [[Float]](repeating: [Float](repeating: 0, count: size), count: stem.channels)
             imag = real
+            hold = [[Float]](repeating: [Float](repeating: 0, count: SeparationJob.modelBins), count: stem.channels)
+            lastLevel = hold
         }
 
         func process(input: [[Float]], count: Int, startFrame: Int, keep: Range<Int>) throws {
-            let half = SeparationJob.fftSize / 2
-            let bins = SeparationJob.bins
+            let n = SeparationJob.fftSize
+            let half = Self.half
+            let bins = SeparationJob.modelBins
             let frames = SeparationJob.frames
-            let mix = try MLMultiArray(shape: [1, 2, NSNumber(value: bins), NSNumber(value: frames)], dataType: .float32)
+            let mix = try MLMultiArray(shape: [1, 4, NSNumber(value: bins), NSNumber(value: frames)], dataType: .float32)
             let mixPointer = mix.dataPointer.assumingMemoryBound(to: Float.self)
             let s = mix.strides.map(\.intValue)
-            mixPointer.initialize(repeating: 0, count: mix.count)
+            for i in 0..<mix.count { mixPointer[i] = 0 }
 
-            // Forward STFT and magnitudes (vDSP's real FFT is scaled by 2; halve for true |X|).
+            // Forward STFT; the model wants the textbook spectrum, so vDSP's factor is divided out.
             for c in 0..<stem.channels {
                 for f in 0..<count {
                     let start = f * SeparationJob.hop
-                    for i in 0..<SeparationJob.fftSize {
-                        let index = start + i
-                        frame[i] = (index < input[c].count ? input[c][index] : 0) * window[i]
+                    for i in 0..<half {
+                        let a = start + 2 * i, b = a + 1
+                        even[i] = (a < input[c].count ? input[c][a] : 0) * window[2 * i]
+                        odd[i] = (b < input[c].count ? input[c][b] : 0) * window[2 * i + 1]
                     }
+                    forward.transform(inputReal: even, inputImaginary: odd, outputReal: &outRe, outputImaginary: &outIm)
                     let base = f * half
-                    real[c].withUnsafeMutableBufferPointer { re in
-                        imag[c].withUnsafeMutableBufferPointer { im in
-                            var split = DSPSplitComplex(realp: re.baseAddress! + base, imagp: im.baseAddress! + base)
-                            frame.withUnsafeBufferPointer { buf in
-                                buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: half) {
-                                    vDSP_ctoz($0, 2, &split, 1, vDSP_Length(half))
-                                }
-                            }
-                            fft.forward(input: split, output: &split)
-                        }
+                    for b in 0..<half {
+                        real[c][base + b] = outRe[b]
+                        imag[c][base + b] = outIm[b]
                     }
                     for modelChannel in (stem.channels == 1 ? [0, 1] : [c]) {
-                        let row = mixPointer + modelChannel * s[1] + f * s[3]
-                        row[0] = abs(real[c][base]) / 2
-                        row[(bins - 1) * s[2]] = abs(imag[c][base]) / 2
-                        for b in 1..<half {
-                            let re = real[c][base + b], im = imag[c][base + b]
-                            row[b * s[2]] = (re * re + im * im).squareRoot() / 2
+                        let re = mixPointer + (2 * modelChannel) * s[1] + f * s[3]
+                        let im = mixPointer + (2 * modelChannel + 1) * s[1] + f * s[3]
+                        // UVR zeroes the three lowest bins before running the model.
+                        for b in 3..<bins {
+                            re[b * s[2]] = outRe[b] / forwardScale
+                            im[b * s[2]] = outIm[b] / forwardScale
                         }
                     }
                 }
             }
 
-            let result = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["mix": mix]))
-            guard let mask = result.featureValue(for: "mask")?.multiArrayValue else { throw SeparationError.noModel }
-            let read = MaskReader(mask)
+            let result = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["input": mix]))
+            guard let output = result.featureValue(for: "output")?.multiArrayValue else { throw SeparationError.noModel }
+            let vocal = OutputReader(output)
 
-            // Masked inverse STFT; WOLA with a Hann window at 75 % overlap sums to 1.5.
-            let scale = 1 / (2 * Float(SeparationJob.fftSize) * 1.5)
+            let scale = 1 / roundTripScale
+            // Model output is in textbook units; bring it to vDSP's to compare with the mix.
+            let vocalScale = SeparationJob.compensate * forwardScale
             for c in 0..<stem.channels {
                 let buffer = stem.buffers[c]
                 for f in keep {
                     let base = f * half
-                    var re = Array(real[c][base..<base + half])
-                    var im = Array(imag[c][base..<base + half])
-                    re[0] *= read(c, 0, f)
-                    im[0] *= read(c, bins - 1, f)
-                    for b in 1..<half {
-                        let m = read(c, b, f)
-                        re[b] *= m
-                        im[b] *= m
-                    }
-                    re.withUnsafeMutableBufferPointer { rp in
-                        im.withUnsafeMutableBufferPointer { ip in
-                            var split = DSPSplitComplex(realp: rp.baseAddress!, imagp: ip.baseAddress!)
-                            fft.inverse(input: split, output: &split)
-                            frame.withUnsafeMutableBufferPointer { buf in
-                                buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: half) {
-                                    vDSP_ztoc(&split, 1, $0, 2, vDSP_Length(half))
-                                }
-                            }
+                    for b in 0..<half {
+                        let mixRe = real[c][base + b]
+                        let mixIm = b == 0 ? 0 : imag[c][base + b]
+                        let level = (mixRe * mixRe + mixIm * mixIm).squareRoot()
+                        var mask: Float = 0
+                        if b < bins {
+                            let vRe = vocal(2 * c, b, f) * vocalScale
+                            let vIm = vocal(2 * c + 1, b, f) * vocalScale
+                            let estimate = min(1, (vRe * vRe + vIm * vIm).squareRoot() / (level + 1e-9))
+                            mask = shape(estimate, level: level, channel: c, bin: b)
                         }
+                        outRe[b] = mixRe * mask
+                        outIm[b] = b == 0 ? 0 : mixIm * mask
                     }
+                    inverse.transform(inputReal: outRe, inputImaginary: outIm, outputReal: &even, outputImaginary: &odd)
                     let origin = (startFrame + f) * SeparationJob.hop
-                    for i in 0..<SeparationJob.fftSize {
-                        let n = origin + i
-                        guard n < stem.capacity else { break }
-                        buffer[n] = Float16(Float(buffer[n]) + frame[i] * window[i] * scale)
+                    for i in 0..<n {
+                        let index = origin + i
+                        guard index < stem.capacity else { break }
+                        let sample = (i % 2 == 0 ? even[i / 2] : odd[i / 2]) * scale * synthesis[i]
+                        buffer[index] = Float16(Float(buffer[index]) + sample)
                     }
                 }
             }
         }
+
+        /// Turns the model's vocal share of a bin into the removal mask: over-subtract, lift the
+        /// uncertain middle, then let it linger after the voice unless a new note starts.
+        private func shape(_ estimate: Float, level: Float, channel c: Int, bin b: Int) -> Float {
+            let pushed = min(1, estimate * Self.overSubtract)
+            let lifted = pow(pushed, Self.lift)
+            let onset = level > lastLevel[c][b] * Self.onsetRatio + 1e-6
+            lastLevel[c][b] = level
+            let carried = onset ? 0 : hold[c][b] * tailDecay
+            hold[c][b] = max(lifted, carried)
+            return max(lifted, carried * Self.tailAmount)
+        }
     }
 
-    /// Reads the model's mask (float16 or float32, any strides) clamped to 0…1.
-    private struct MaskReader {
+    /// Reads the model output (float16 or float32, any strides).
+    private struct OutputReader {
         let array: MLMultiArray
         let strides: [Int]
-        let channels: Int
 
         init(_ array: MLMultiArray) {
             self.array = array
             strides = array.strides.map(\.intValue)
-            channels = array.shape[1].intValue
         }
 
         func callAsFunction(_ c: Int, _ b: Int, _ f: Int) -> Float {
-            let index = min(c, channels - 1) * strides[1] + b * strides[2] + f * strides[3]
-            let value: Float = switch array.dataType {
+            let index = c * strides[1] + b * strides[2] + f * strides[3]
+            return switch array.dataType {
             case .float16: Float(array.dataPointer.assumingMemoryBound(to: Float16.self)[index])
             case .double: Float(array.dataPointer.assumingMemoryBound(to: Double.self)[index])
             default: array.dataPointer.assumingMemoryBound(to: Float.self)[index]
             }
-            return min(max(value, 0), 1)
         }
     }
 }
@@ -385,7 +448,7 @@ private enum SeparationJob {
 enum VocalModel {
     private static let cached = OSAllocatedUnfairLock<MLModel?>(uncheckedState: nil)
     /// Bump when the bundled model changes so the compiled copy is rebuilt.
-    private static let version = 1
+    private static let version = 2
 
     static func load() async throws -> MLModel {
         if let model = cached.withLock({ $0 }) { return model }
