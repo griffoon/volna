@@ -73,36 +73,82 @@ final class VocalSeparator {
     }
 }
 
-/// The vocal stem being built for one stream. Written by the separation job past `processed`,
-/// read by the audio tap below it, so the two never touch the same samples.
+/// One stream, decoded by us (`mix`) and its separated vocal (`vocal`). Written by the separation
+/// job past `processed`, read by the audio tap below it, so the two never touch the same samples.
+///
+/// The tap doesn't subtract the vocal from what AVPlayer hands it: the two decoders can disagree
+/// by a few milliseconds (encoder delay), and subtracting a shifted copy sounds like added reverb.
+/// Instead it plays our own `mix − vocal`, which is consistent by construction, at an offset
+/// measured once by cross-correlating what the tap actually plays against our decode.
 final class VocalStem: @unchecked Sendable {
     let key: Int
     let sampleRate: Double
     let channels: Int
     let capacity: Int
-    let buffers: [UnsafeMutablePointer<Float16>]
-    private let done = OSAllocatedUnfairLock(initialState: 0)
+    let mix: [UnsafeMutablePointer<Float16>]
+    let vocal: [UnsafeMutablePointer<Float16>]
+    private let progress = OSAllocatedUnfairLock(initialState: (decoded: 0, processed: 0))
+    private let alignment = OSAllocatedUnfairLock<Alignment>(uncheckedState: Alignment())
+
+    struct Alignment {
+        var probe: (start: Int, samples: [Float])?
+        /// Our decode index = tap index + offset.
+        var offset: Int?
+        var failures = 0
+    }
 
     init(key: Int, sampleRate: Double, channels: Int, capacity: Int) {
         self.key = key
         self.sampleRate = sampleRate
         self.channels = channels
         self.capacity = capacity
-        buffers = (0..<channels).map { _ in
-            let pointer = UnsafeMutablePointer<Float16>.allocate(capacity: capacity)
-            pointer.initialize(repeating: 0, count: capacity)
-            return pointer
+        func make() -> [UnsafeMutablePointer<Float16>] {
+            (0..<channels).map { _ in
+                let pointer = UnsafeMutablePointer<Float16>.allocate(capacity: capacity)
+                pointer.initialize(repeating: 0, count: capacity)
+                return pointer
+            }
+        }
+        mix = make()
+        vocal = make()
+    }
+
+    deinit { (mix + vocal).forEach { $0.deallocate() } }
+
+    /// Vocal samples below this index are final.
+    var processed: Int { progress.withLock { $0.processed } }
+    /// Decoded mix samples below this index are written.
+    var decoded: Int { progress.withLock { $0.decoded } }
+    func markProcessed(_ value: Int) { progress.withLock { $0.processed = min(value, capacity) } }
+    func markDecoded(_ value: Int) { progress.withLock { $0.decoded = min(value, capacity) } }
+
+    var offset: Int? { alignment.withLock { $0.offset } }
+
+    /// Called by the tap with what it is playing until an offset is known; keeps the first offer.
+    func offerProbe(start: Int, samples: UnsafePointer<Float>, count: Int) {
+        alignment.withLock { state in
+            guard state.offset == nil, state.probe == nil, count >= 1024 else { return }
+            state.probe = (start, Array(UnsafeBufferPointer(start: samples, count: count)))
         }
     }
 
-    deinit { buffers.forEach { $0.deallocate() } }
+    fileprivate func takeProbe() -> (start: Int, samples: [Float])? { alignment.withLock { $0.probe } }
 
-    /// Samples below this index are final.
-    var processed: Int { done.withLock { $0 } }
-    func markProcessed(_ value: Int) { done.withLock { $0 = min(value, capacity) } }
+    fileprivate func resolve(offset: Int?) {
+        alignment.withLock { state in
+            if let offset {
+                state.offset = offset
+            } else {
+                // Unclear match (silence, say): try another probe; give up on alignment eventually.
+                state.probe = nil
+                state.failures += 1
+                if state.failures >= 12 { state.offset = 0 }
+            }
+        }
+    }
 }
 
-/// What the audio tap reads: the current stem and how much of it to remove.
+/// What the audio tap reads: the current stem and how much of the vocal to remove.
 enum VocalStems {
     private static let state = OSAllocatedUnfairLock<(stem: VocalStem?, gain: Float)>(uncheckedState: (nil, 0))
 
@@ -111,10 +157,10 @@ enum VocalStems {
     static func set(_ stem: VocalStem?) { state.withLock { $0.stem = stem } }
     static func setGain(_ gain: Float) { state.withLock { $0.gain = gain } }
 
-    /// The stem for this stream and the removal amount, or nil when there is nothing to do.
+    /// The stem for this stream (if any) and the removal amount 0…1.
     static func current(for key: Int) -> (stem: VocalStem, gain: Float)? {
         state.withLock { value in
-            guard let stem = value.stem, stem.key == key, value.gain > 0.001 else { return nil }
+            guard let stem = value.stem, stem.key == key else { return nil }
             return (stem, value.gain)
         }
     }
@@ -194,9 +240,11 @@ private enum SeparationJob {
                     for c in 0..<channels { pending[c].append(contentsOf: repeatElement(0, count: fftSize)) }
                     break
                 }
-                append(buffer, channels: Int(asbd.mChannelsPerFrame), to: &pending)
+                append(buffer, channels: Int(asbd.mChannelsPerFrame), to: &pending,
+                       stem: stem, at: pendingStart + pending[0].count)
             }
             if reader.status == .failed { throw reader.error ?? SeparationError.unreadable }
+            align(stem)
 
             let available = (pendingStart + pending[0].count - chunkStart * hop - fftSize) / hop + 1
             let count = min(frames, available)
@@ -220,10 +268,17 @@ private enum SeparationJob {
                 pendingStart += drop
             }
         }
+
+        // Playback may start (or the probe may be unclear) after separation is done.
+        for _ in 0..<600 where stem.offset == nil {
+            try await Task.sleep(for: .milliseconds(200))
+            align(stem)
+        }
     }
 
-    /// Appends an interleaved float sample buffer to the per-channel arrays.
-    private static func append(_ buffer: CMSampleBuffer, channels sourceChannels: Int, to pending: inout [[Float]]) {
+    /// Appends an interleaved float sample buffer to the per-channel arrays and to the stem's mix.
+    private static func append(_ buffer: CMSampleBuffer, channels sourceChannels: Int, to pending: inout [[Float]],
+                               stem: VocalStem, at position: Int) {
         guard let block = CMSampleBufferGetDataBuffer(buffer) else { return }
         let length = CMBlockBufferGetDataLength(block)
         var samples = [Float](repeating: 0, count: length / MemoryLayout<Float>.size)
@@ -234,9 +289,49 @@ private enum SeparationJob {
         let frameCount = samples.count / stride
         for c in 0..<pending.count {
             let source = min(c, stride - 1)
+            let mix = stem.mix[c]
             pending[c].reserveCapacity(pending[c].count + frameCount)
-            for i in 0..<frameCount { pending[c].append(samples[i * stride + source]) }
+            for i in 0..<frameCount {
+                let value = samples[i * stride + source]
+                pending[c].append(value)
+                if position + i < stem.capacity { mix[position + i] = Float16(value) }
+            }
         }
+        stem.markDecoded(position + frameCount)
+    }
+
+    /// Largest decoder disagreement looked for (~190 ms at 44.1 kHz).
+    private static let maxLag = 8192
+    /// Normalised correlation needed to trust a match.
+    private static let minCorrelation: Float = 0.6
+
+    /// Finds the tap's probe in our decode: offset = where it matches − where the tap said it was.
+    private static func align(_ stem: VocalStem) {
+        guard stem.offset == nil, let probe = stem.takeProbe() else { return }
+        let length = probe.samples.count
+        let lo = max(0, probe.start - maxLag)
+        let hi = probe.start + maxLag + length
+        guard hi <= stem.decoded else { return }   // not decoded that far yet
+        let segment = (lo..<hi).map { Float(stem.mix[0][$0]) }
+        let lags = segment.count - length + 1
+        var correlation = [Float](repeating: 0, count: lags)
+        segment.withUnsafeBufferPointer { s in
+            probe.samples.withUnsafeBufferPointer { p in
+                vDSP_conv(s.baseAddress!, 1, p.baseAddress!, 1, &correlation, 1,
+                          vDSP_Length(lags), vDSP_Length(length))
+            }
+        }
+        var peak: Float = 0
+        var at: vDSP_Length = 0
+        vDSP_maxvi(correlation, 1, &peak, &at, vDSP_Length(lags))
+        var probeEnergy: Float = 0
+        var segmentEnergy: Float = 0
+        vDSP_svesq(probe.samples, 1, &probeEnergy, vDSP_Length(length))
+        segment.withUnsafeBufferPointer { s in
+            vDSP_svesq(s.baseAddress! + Int(at), 1, &segmentEnergy, vDSP_Length(length))
+        }
+        let score = peak / max((probeEnergy * segmentEnergy).squareRoot(), 1e-9)
+        stem.resolve(offset: score >= minCorrelation ? lo + Int(at) - probe.start : nil)
     }
 
     /// A local copy of the stream: decrypted lossless files already are; others are downloaded.
@@ -381,7 +476,7 @@ private enum SeparationJob {
             // Model output is in textbook units; bring it to vDSP's to compare with the mix.
             let vocalScale = SeparationJob.compensate * forwardScale
             for c in 0..<stem.channels {
-                let buffer = stem.buffers[c]
+                let buffer = stem.vocal[c]
                 for f in keep {
                     let base = f * half
                     for b in 0..<half {

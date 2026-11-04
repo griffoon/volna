@@ -288,6 +288,8 @@ private final class TapContext {
     /// Identifies the stream for the vocal stem (see VocalSeparator).
     private let streamKey: Int?
     private var vocalGain: Float = 0
+    /// How much of the output comes from our separated decode instead of AVPlayer, 0…1.
+    private var vocalMix: Float = 0
     private var filters: [vDSP.Biquad<Float>] = []
     private var filterVersion = -1
     private var scratch = [Float]()
@@ -353,35 +355,64 @@ private final class TapContext {
         }
     }
 
-    /// «Голос»: subtracts the separated vocal stem, sample-aligned by media time, where it is
-    /// ready. The amount glides across each buffer so moving the slider doesn't click.
+    /// «Голос»: while the slider is below 100 %, plays our own separated `mix − gain·vocal` in
+    /// place of AVPlayer's audio, at the measured decoder offset (see `VocalStem`). Both the switch
+    /// and the amount glide across each buffer so nothing clicks.
     private func removeVocals(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frames: Int, startTime: Double?) {
-        let target: Float
         let found = streamKey.flatMap { VocalStems.current(for: $0) }
-        if let found, let startTime, abs(found.stem.sampleRate - Double(sampleRate)) < 1 {
-            target = found.gain
-        } else {
-            target = 0
+        guard let found, let startTime, abs(found.stem.sampleRate - Double(sampleRate)) < 1 else {
+            resetVocalRemoval()
+            return
         }
-        defer { vocalGain = target }
-        guard let found, let startTime, target > 0 || vocalGain > 0 else { return }
         let stem = found.stem
-        let first = Int((startTime * Double(sampleRate)).rounded())
-        let ready = stem.processed
-        guard first >= 0, first < ready else { return }
-        let count = min(frames, ready - first)
-        let step = (target - vocalGain) / Float(frames)
-
         let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        let first = Int((startTime * Double(sampleRate)).rounded())
+
+        // Until we know how our decode lines up with the player's, hand it a sample to match.
+        guard let offset = stem.offset else {
+            if let data = buffers.first?.mData?.assumingMemoryBound(to: Float.self) {
+                stem.offerProbe(start: first, samples: data, count: frames)
+            }
+            resetVocalRemoval()
+            return
+        }
+
+        let source = first + offset
+        let ready = source >= 0 && source + frames <= stem.processed
+        let targetGain = found.gain
+        let targetMix: Float = ready && (targetGain > 0.001 || vocalGain > 0.001) ? 1 : 0
+        defer {
+            vocalGain = targetGain
+            vocalMix = targetMix
+        }
+        guard targetMix > 0 || vocalMix > 0 else { return }
+        guard ready else {
+            resetVocalRemoval()
+            return
+        }
+
+        let gainStep = (targetGain - vocalGain) / Float(frames)
+        let mixStep = (targetMix - vocalMix) / Float(frames)
         for (channel, buffer) in buffers.enumerated() {
             guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            let vocal = stem.buffers[min(channel, stem.channels - 1)] + first
+            let stemChannel = min(channel, stem.channels - 1)
+            let mix = stem.mix[stemChannel] + source
+            let vocal = stem.vocal[stemChannel] + source
             var gain = vocalGain
-            for i in 0..<count {
-                data[i] -= gain * Float(vocal[i])
-                gain += step
+            var weight = vocalMix
+            for i in 0..<frames {
+                let separated = Float(mix[i]) - gain * Float(vocal[i])
+                data[i] += (separated - data[i]) * weight
+                gain += gainStep
+                weight += mixStep
             }
         }
+    }
+
+    /// Hands straight back to AVPlayer's audio: without stem data there is nothing to blend with.
+    private func resetVocalRemoval() {
+        vocalMix = 0
+        vocalGain = 0
     }
 
     /// Walks the chunk in hops, analysing the window that ends at each hop.
