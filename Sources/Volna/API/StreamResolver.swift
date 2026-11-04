@@ -7,11 +7,11 @@ struct StreamSource: Sendable, Equatable {
     let codec: String
     let kbps: Int?
 
-    /// HUD line like `FLAC · 1411 kbps`.
+    /// HUD line like `FLAC | 1411 kbps`.
     var label: String {
         let name = codec.replacingOccurrences(of: "-mp4", with: "").uppercased()
         guard let kbps, kbps > 0 else { return name }
-        return "\(name) · \(kbps) kbps"
+        return "\(name) | \(kbps) kbps"
     }
 }
 

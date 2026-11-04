@@ -189,7 +189,7 @@ struct EqualizerView: View {
                 .terminalRow()
             }
 
-            Section(header: TerminalLabel(text: "полосы · дБ")) {
+            Section(header: TerminalLabel(text: "полосы | дБ")) {
                 HStack(alignment: .bottom, spacing: 0) {
                     ForEach(AudioProcessing.frequencies.indices, id: \.self) { band in
                         bandSlider(band)

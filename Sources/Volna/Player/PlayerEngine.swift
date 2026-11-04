@@ -35,7 +35,7 @@ final class PlayerEngine {
     private(set) var stream: StreamSource?
     var errorMessage: String?
 
-    /// `sess#7f3a · batch 07` while a rotor session runs.
+    /// `sess#7f3a | batch 07` while a rotor session runs.
     var waveTag: String? { wave?.tag }
     /// Latest reports to Yandex and how they went, newest last.
     private(set) var reportLog: [String] = []
@@ -285,16 +285,16 @@ final class PlayerEngine {
 
     private func reportListen(played: Double, position: Double, label: String?) {
         guard let listen, let client, let uid else {
-            if let label { log("\(label) · no uid") }
+            if let label { log("\(label) | no uid") }
             return
         }
         Task {
             do {
                 try await client.playAudio(track: listen.track, uid: uid, from: listen.from,
                                            playID: listen.playID, played: played, position: position)
-                if let label { log("\(label) · ok") }
+                if let label { log("\(label) | ok") }
             } catch {
-                log("\(label ?? "play-audio start") · \(WaveSession.describe(error))")
+                log("\(label ?? "play-audio start") | \(WaveSession.describe(error))")
             }
         }
     }
@@ -592,7 +592,7 @@ final class PlayerEngine {
     private func skipUnplayable(_ track: Track, reason: String) {
         isLoading = false
         consecutiveFailures += 1
-        log("skip «\(track.title.lowercased())» · \(reason)")
+        log("skip «\(track.title.lowercased())» | \(reason)")
         guard consecutiveFailures < Self.maxConsecutiveFailures else {
             consecutiveFailures = 0
             activePlayer.pause()

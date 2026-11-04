@@ -105,6 +105,8 @@ struct WaveView: View {
                 }
                 .scrollIndicators(.hidden)
                 .ignoresSafeArea()
+                // Content runs under the top bar here; without this iOS darkens a band behind it.
+                .scrollEdgeEffectHidden(true, for: .top)
                 .scrollPosition($scroll)
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     geo.contentOffset.y + geo.contentInsets.top < geo.containerSize.height * 0.85
@@ -170,9 +172,9 @@ struct WaveView: View {
             Haptics.tick(); withAnimation(.snappy) { showLog.toggle() }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(player.waveTag ?? "sess#---- · idle")
+                Text(player.waveTag ?? "sess#---- | idle")
                 HStack(spacing: 0) {
-                    Text(player.stream.map { "\($0.label) · " } ?? "-- · ")
+                    Text(player.stream.map { "\($0.label) | " } ?? "-- | ")
                     Text(player.isPlaying ? "buf 30s" : "paused").foregroundStyle(Brand.acid)
                 }
                 // What was last reported to Yandex; tap the block for the recent history.
@@ -220,14 +222,12 @@ struct WaveView: View {
         }
     }
 
-    /// Previous · play · next. Previous and next wear the same outlined rings as like/dislike
+    /// Previous | play | next. Previous and next wear the same outlined rings as like/dislike
     /// above them, so the whole control block reads as one set around the acid play button.
     private var transport: some View {
         HStack(spacing: 26) {
             if hasTrack {
-                Button { Haptics.step(); player.goBack() } label: {
-                    RoundGlassLabel(symbol: "backward.fill", tint: .white, size: 58, iconSize: 19)
-                }
+                GlassTransportButton(kind: .previous, size: 60) { Haptics.step(); player.goBack() }
                 .accessibilityLabel("Предыдущий трек")
                 .disabled(player.previousTrack == nil)
                 .opacity(player.previousTrack == nil ? 0.4 : 1)
@@ -236,9 +236,7 @@ struct WaveView: View {
                 if hasTrack { Haptics.thump(); player.togglePlay() } else { Haptics.launch(); player.startWave() }
             }
             if hasTrack {
-                Button { Haptics.step(); player.next() } label: {
-                    RoundGlassLabel(symbol: "forward.fill", tint: .white, size: 58, iconSize: 19)
-                }
+                GlassTransportButton(kind: .next, size: 60) { Haptics.step(); player.next() }
                 .accessibilityLabel("Следующий трек")
             }
         }
@@ -254,7 +252,7 @@ struct WaveView: View {
     /// `available` is the height between the top bar and the mini player; the cover shrinks on
     /// shorter screens so everything fits without overlapping the bars.
     private func center(available: CGFloat) -> some View {
-        let cover = min(max(available * 0.3, 150), 240)
+        let cover = min(max(available * 0.27, 140), 236)
         return VStack(spacing: 14) {
             Button {
                 guard hasTrack, let artist = player.current?.artists.first else { return }
@@ -330,6 +328,7 @@ struct WaveView: View {
                 ScrollView(.horizontal) { chipRow.padding(.horizontal, 2) }
                     .scrollIndicators(.hidden)
             }
+            tuneButton
         }
     }
 
@@ -371,20 +370,31 @@ struct WaveView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button {
-                Haptics.tap()
-                router.destination = .waveSettings
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 32)
-                    .background(.black.opacity(0.8), in: .capsule)
-                    .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Настройки Моей волны")
         }
+    }
+
+    /// The way into My Wave settings: a lit glass capsule, impossible to miss, right above the
+    /// quick-pick chips it belongs with.
+    private var tuneButton: some View {
+        Button {
+            Haptics.tap()
+            router.destination = .waveSettings
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "dial.medium.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .symbolEffect(.wiggle, options: .repeat(.periodic(delay: 6)))
+                Text("настроить волну")
+                    .font(Brand.mono(13, weight: .heavy))
+            }
+            .foregroundStyle(Brand.acid)
+            .padding(.horizontal, 18)
+            .frame(height: 42)
+            .glassEffect(.regular.tint(Brand.acid.opacity(0.18)).interactive(), in: .capsule)
+            .overlay(Capsule().stroke(Brand.acid.opacity(0.55), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Настройки Моей волны")
     }
 
     // MARK: Character chips (server-provided "diversity" options)
@@ -432,8 +442,8 @@ private struct AnalyzerReadout: View {
             let d = AudioAnalyzer.shared.diagnostics()
             let l = AudioAnalyzer.shared.snapshot()
             VStack(alignment: .leading, spacing: 4) {
-                Text("> fft: taps \(d.tapsAttached) · \(Int(d.sampleRate)) Hz · \(d.format)")
-                Text("> sync: \(d.synced ? "ok" : "нет кадров") · опережение \(String(format: "%.2f", d.lead)) с")
+                Text("> fft: taps \(d.tapsAttached) | \(Int(d.sampleRate)) Hz | \(d.format)")
+                Text("> sync: \(d.synced ? "ok" : "нет кадров") | опережение \(String(format: "%.2f", d.lead)) с")
                     .foregroundStyle(d.synced ? Brand.acid : Color(red: 1, green: 0.45, blue: 0.45))
                 Text("> бас \(Self.bar(l.bass)) \(Self.hit(l.bassHit))")
                 Text("> мид \(Self.bar(l.mid)) \(Self.hit(l.midHit))")
@@ -444,7 +454,7 @@ private struct AnalyzerReadout: View {
 
     private static func bar(_ value: Float) -> String {
         let filled = Int((min(max(value, 0), 1) * 12).rounded())
-        return String(repeating: "█", count: filled) + String(repeating: "·", count: 12 - filled)
+        return String(repeating: "█", count: filled) + String(repeating: "-", count: 12 - filled)
     }
 
     private static func hit(_ value: Float) -> String { value > 0.3 ? "◆" : "◇" }
@@ -461,8 +471,8 @@ struct RoundGlassLabel: View {
             .font(.system(size: iconSize, weight: .semibold))
             .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(.black.opacity(0.45), in: .circle)
-            .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+            .contentShape(.circle)
+            .glassEffect(.regular.interactive(), in: .circle)
     }
 }
 
@@ -496,11 +506,12 @@ private struct PlayPulseButton: View {
                     if isLoading {
                         ProgressView().tint(Brand.ink)
                     } else {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .contentTransition(.symbolEffect(.replace))
+                        TransportGlyph.icon(isPlaying ? .pause : .play, height: 30)
+                            .offset(x: isPlaying ? 0 : 3)
+                            .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .font(.system(size: 34, weight: .heavy))
+                .animation(.snappy(duration: 0.2), value: isPlaying)
                 .foregroundStyle(Brand.ink)
                 .frame(width: 96, height: 96)
                 .background(Brand.acid, in: .circle)

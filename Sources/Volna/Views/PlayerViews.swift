@@ -24,14 +24,17 @@ struct MiniPlayer: View {
             Button {
                 Haptics.thump(); player.togglePlay()
             } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .contentTransition(.symbolEffect(.replace))
+                TransportGlyph.icon(player.isPlaying ? .pause : .play, height: 16)
+                    .frame(width: 36, height: 36)
+                    .contentShape(.rect)
             }
             .disabled(player.current == nil)
             Button {
                 Haptics.step(); player.next()
             } label: {
-                Image(systemName: "forward.fill")
+                TransportGlyph.icon(.next, height: 14)
+                    .frame(width: 36, height: 36)
+                    .contentShape(.rect)
             }
             .disabled(player.current == nil)
         }
@@ -222,9 +225,7 @@ struct NowPlayingView: View {
             .disabled(player.isWave)
             .accessibilityLabel(player.isShuffled ? "Выключить перемешивание" : "Перемешать")
             Spacer()
-            Button { Haptics.step(); player.previous() } label: {
-                RoundGlassLabel(symbol: "backward.fill", size: 64, iconSize: 21)
-            }
+            GlassTransportButton(kind: .previous, size: 62) { Haptics.step(); player.previous() }
             .accessibilityLabel("Назад")
             Spacer()
             Button { Haptics.thump(); player.togglePlay() } label: {
@@ -232,11 +233,12 @@ struct NowPlayingView: View {
                     if player.isLoading {
                         ProgressView().tint(Brand.ink)
                     } else {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .contentTransition(.symbolEffect(.replace))
+                        TransportGlyph.icon(player.isPlaying ? .pause : .play, height: 28)
+                            .offset(x: player.isPlaying ? 0 : 3)
+                            .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .font(.system(size: 32, weight: .heavy))
+                .animation(.snappy(duration: 0.2), value: player.isPlaying)
                 .foregroundStyle(Brand.ink)
                 .frame(width: 88, height: 88)
                 .background(Brand.acid, in: .circle)
@@ -244,9 +246,7 @@ struct NowPlayingView: View {
             }
             .accessibilityLabel(player.isPlaying ? "Пауза" : "Играть")
             Spacer()
-            Button { Haptics.step(); player.next() } label: {
-                RoundGlassLabel(symbol: "forward.fill", size: 64, iconSize: 21)
-            }
+            GlassTransportButton(kind: .next, size: 62) { Haptics.step(); player.next() }
             .accessibilityLabel("Дальше")
             Spacer()
             // Lists: off → whole queue → one track. Wave: off → one track.
@@ -435,7 +435,7 @@ struct QueueView: View {
                             .terminalRow()
                     }
                 } header: {
-                    TerminalLabel(text: "далее · \(player.upNext.count)")
+                    TerminalLabel(text: "далее | \(player.upNext.count)")
                 }
             }
             .terminalPage()

@@ -639,7 +639,9 @@ struct Pin: Decodable, Sendable, Identifiable {
     let type: String
     let data: Data?
 
-    var id: String { Pin.key(type: type, data: data) }
+    /// The API says `artist_item`, `album_item`, `playlist_item`; this is the bare kind.
+    var kind: String { type.hasSuffix("_item") ? String(type.dropLast(5)) : type }
+    var id: String { Pin.key(type: kind, data: data) }
     var displayTitle: String { data?.title ?? data?.name ?? "" }
     var coverURI: String? { data?.cover?.uri ?? data?.cover?.itemsUri?.first }
 

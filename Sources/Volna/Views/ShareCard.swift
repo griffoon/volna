@@ -71,7 +71,7 @@ private struct ShareCardPoster: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("> volna · now playing")
+                Text("> volna | now playing")
                 Spacer()
                 if let bpm { Text("\(Int(bpm.rounded())) bpm") }
             }

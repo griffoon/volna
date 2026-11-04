@@ -66,7 +66,7 @@ struct LibraryView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("> ~/коллекция" + (session.displayName.map { " · \($0.lowercased())" } ?? ""))
+            Text("> ~/коллекция" + (session.displayName.map { " | \($0.lowercased())" } ?? ""))
                 .font(Brand.mono(11, weight: .medium))
                 .foregroundStyle(Brand.acid)
             Text("КОЛЛЕКЦИЯ")
@@ -86,7 +86,7 @@ struct LibraryView: View {
         var parts = ["\(session.likedRefs.count) трк"]
         if !playlists.isEmpty { parts.append("\(playlists.count) плейл.") }
         if !session.pins.isEmpty { parts.append("\(session.pins.count) закрепл.") }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: " | ")
     }
 
     // MARK: Pins and presaves as round tokens
@@ -117,7 +117,7 @@ struct LibraryView: View {
     private var cdShelf: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                TerminalLabel(text: "плейлисты · \(playlists.count)")
+                TerminalLabel(text: "плейлисты | \(playlists.count)")
                 Spacer()
                 Text("листай →")
                     .font(Brand.mono(11))
@@ -231,7 +231,7 @@ private struct LikedWall: View {
                     Text("// мне нравится")
                         .font(Brand.mono(12, weight: .bold))
                         .foregroundStyle(Brand.acid)
-                    Text(count > 0 ? count.formatted(.number.grouping(.never)) : "····")
+                    Text(count > 0 ? count.formatted(.number.grouping(.never)) : "----")
                         .font(Brand.display(60))
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
@@ -276,22 +276,29 @@ private struct LikedWall: View {
 
     /// One endless row of covers sliding sideways at `speed` points per second.
     private func drifting(_ row: [Track], speed: Double) -> some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
-            let width = CGFloat(max(row.count, 1)) * (Self.tile + 6)
-            let shift = CGFloat((context.date.timeIntervalSinceReferenceDate * speed).truncatingRemainder(dividingBy: Double(width)))
-            HStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { _ in
-                    ForEach(Array(row.enumerated()), id: \.offset) { _, track in
-                        CoverImage(uri: track.cover, size: 150, corner: 2)
-                            .frame(width: Self.tile, height: Self.tile)
+        // The strip lives in an overlay so its (very wide) size never stretches the page.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.tile)
+            .overlay(alignment: .leading) {
+                TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+                    let width = CGFloat(max(row.count, 1)) * (Self.tile + 6)
+                    let shift = CGFloat((context.date.timeIntervalSinceReferenceDate * speed)
+                        .truncatingRemainder(dividingBy: Double(width)))
+                    HStack(spacing: 6) {
+                        ForEach(0..<2, id: \.self) { _ in
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, track in
+                                CoverImage(uri: track.cover, size: 150, corner: 2)
+                                    .frame(width: Self.tile, height: Self.tile)
+                            }
+                        }
                     }
+                    .fixedSize()
+                    .offset(x: speed > 0 ? -abs(shift) : abs(shift) - width)
                 }
             }
-            .offset(x: speed > 0 ? -shift : shift - width)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(height: Self.tile)
-        .accessibilityHidden(true)
+            .clipped()
+            .accessibilityHidden(true)
     }
 }
 
@@ -553,7 +560,7 @@ struct PlaylistView: View {
         List {
             Section {
                 CollectionHeader(
-                    kind: isOwn ? ((isPublic ?? (playlist.visibility == "public")) ? "playlist · public" : "playlist · private") : "playlist",
+                    kind: isOwn ? ((isPublic ?? (playlist.visibility == "public")) ? "playlist | public" : "playlist | private") : "playlist",
                     title: title ?? playlist.title,
                     subtitle: "\(tracks.count) трк",
                     coverURI: playlist.coverURI
@@ -700,7 +707,7 @@ struct AlbumView: View {
                         kind: "album",
                         title: album.title,
                         subtitle: [album.artists?.map(\.name).joined(separator: ", "), album.year.map(String.init)]
-                            .compactMap { $0 }.joined(separator: " · "),
+                            .compactMap { $0 }.joined(separator: " | "),
                         coverURI: album.coverUri
                     ) {
                         player.play(tracks)

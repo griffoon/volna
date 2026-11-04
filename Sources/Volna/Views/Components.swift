@@ -165,7 +165,7 @@ struct TerminalHeader: View {
     }
 }
 
-/// Section label like `// плейлисты · 12`.
+/// Section label like `// плейлисты | 12`.
 struct TerminalLabel: View {
     let text: String
 

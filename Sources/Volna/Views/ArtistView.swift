@@ -19,6 +19,8 @@ struct ArtistView: View {
     @State private var geniusBio: String?
     @State private var translatedBio: String?
     @State private var translation: TranslationSession.Configuration?
+    /// True until both Yandex and Genius have answered.
+    @State private var bioLoading = true
 
     private var bioText: String? {
         if let translatedBio { return translatedBio }
@@ -27,9 +29,9 @@ struct ArtistView: View {
     }
 
     private var bioCaption: String? {
-        if translatedBio != nil { return "genius · перевод" }
+        if translatedBio != nil { return "genius | перевод" }
         if about?.description?.isEmpty == false { return nil }
-        if geniusBio != nil { return translation != nil ? "genius · перевожу…" : "genius" }
+        if geniusBio != nil { return translation != nil ? "genius | перевожу…" : "genius" }
         return nil
     }
 
@@ -75,8 +77,16 @@ struct ArtistView: View {
 
             // The bio right under the header: Genius (translated to Russian on the device) when it
             // has one, otherwise what Yandex says.
+            Section(header: TerminalLabel(text: "об артисте")) {
+                if bioText == nil {
+                    // While Yandex and Genius are asked: blinking placeholder lines; afterwards a
+                    // plain note if neither has anything.
+                    BioPlaceholder(isLoading: bioLoading)
+                        .terminalRow()
+                }
+            }
             if let text = bioText {
-                Section(header: TerminalLabel(text: "об артисте")) {
+                Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(text)
                             .font(.system(size: 15))
@@ -109,11 +119,11 @@ struct ArtistView: View {
                 }
             }
 
-            albumShelf("дискография · \(discography.count)", discography.isEmpty ? info?.albums : discography)
+            albumShelf("дискография | \(discography.count)", discography.isEmpty ? info?.albums : discography)
             albumShelf("сборники и участие", info?.alsoAlbums)
 
             if !concerts.isEmpty {
-                Section(header: TerminalLabel(text: "концерты · \(concerts.count)")) {
+                Section(header: TerminalLabel(text: "концерты | \(concerts.count)")) {
                     ForEach(concerts) { concert in
                         ConcertRow(concert: concert).terminalRow()
                     }
@@ -163,6 +173,10 @@ struct ArtistView: View {
             }
         }
         .terminalPage()
+        // The photo runs up under the close and pin buttons instead of leaving a black band.
+        .ignoresSafeArea(edges: .top)
+        .scrollEdgeEffectHidden(true, for: .top)
+        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
         .overlay {
             if info == nil, error == nil { ProgressView().tint(Brand.acid) }
             if let error { ErrorBanner(message: error) { Task { await load() } } }
@@ -294,6 +308,7 @@ struct ArtistView: View {
                 translation = TranslationSession.Configuration(source: nil, target: Locale.Language(identifier: "ru"))
             }
         }
+        withAnimation(.easeInOut) { bioLoading = false }
     }
 
     private struct Profile {
@@ -348,7 +363,7 @@ private struct ConcertRow: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                 Text([concert.place, concert.date.map { $0.formatted(date: .omitted, time: .shortened) }]
-                        .compactMap { $0 }.joined(separator: " · ").lowercased())
+                        .compactMap { $0 }.joined(separator: " | ").lowercased())
                     .font(Brand.mono(12))
                     .foregroundStyle(.white.opacity(0.55))
                 if let link = concert.afishaUrl.flatMap(URL.init(string:)) {
@@ -360,5 +375,43 @@ private struct ConcertRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// What the bio block shows when there is no text: blinking placeholder lines while searching,
+/// a plain note when nothing was found.
+private struct BioPlaceholder: View {
+    let isLoading: Bool
+    @State private var pulse = false
+
+    var body: some View {
+        if isLoading {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).tint(Brand.acid)
+                    Text("> ищу описание: яндекс | genius")
+                        .font(Brand.mono(11, weight: .medium))
+                        .foregroundStyle(Brand.acid)
+                }
+                ForEach([1.0, 0.92, 0.97, 0.6], id: \.self) { width in
+                    GeometryReader { geo in
+                        Capsule()
+                            .fill(.white.opacity(pulse ? 0.14 : 0.05))
+                            .frame(width: geo.size.width * width, height: 10)
+                    }
+                    .frame(height: 10)
+                }
+            }
+            .padding(.vertical, 4)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+            }
+            .accessibilityLabel("Загружаю описание")
+        } else {
+            Text("> описание отсутствует")
+                .font(Brand.mono(13))
+                .foregroundStyle(.white.opacity(0.45))
+                .padding(.vertical, 4)
+        }
     }
 }

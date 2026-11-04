@@ -310,7 +310,7 @@ private final class TapContext {
         filterVersion = -1
         kickFilter = vDSP.Biquad(coefficients: Self.lowpass(cutoff: Self.kickCutoff, sampleRate: format.mSampleRate),
                                  channelCount: 1, sectionCount: 2, ofType: Float.self)
-        let description = "\(isFloat ? "f32" : "int")\(isInterleaved ? " interleaved" : "") · \(channels)ch · max \(maxFrames)"
+        let description = "\(isFloat ? "f32" : "int")\(isInterleaved ? " interleaved" : "") | \(channels)ch | max \(maxFrames)"
         analyzer?.noteFormat(sampleRate: format.mSampleRate, format: description)
     }
 

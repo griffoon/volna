@@ -54,7 +54,7 @@ struct HomeSections: View {
 
             if !generated.isEmpty {
                 shelf("собрано для тебя", open: {
-                    ShelfGridView(title: "Собрано для тебя", caption: "feed · generated", items: generated) { playlist in
+                    ShelfGridView(title: "Собрано для тебя", caption: "feed | generated", items: generated) { playlist in
                         NavigationLink { PlaylistView(playlist: playlist) } label: { PlaylistCard(playlist: playlist) }
                     }
                 }) {

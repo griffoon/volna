@@ -259,7 +259,7 @@ struct TrackAboutView: View {
                     Button {
                         router.destination = .album(album)
                     } label: {
-                        row("альбом", album.title + (album.year.map { " · \($0)" } ?? ""))
+                        row("альбом", album.title + (album.year.map { " | \($0)" } ?? ""))
                     }
                     .buttonStyle(.plain)
                     .terminalRow()
@@ -329,7 +329,7 @@ struct PinnedLink: View {
 
     var body: some View {
         let data = pin.data
-        switch pin.type {
+        switch pin.kind {
         case "album":
             NavigationLink {
                 AlbumView(album: Album(id: data?.id ?? FlexibleID(""), title: pin.displayTitle,
@@ -352,7 +352,7 @@ struct PinnedLink: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 6) {
-            CoverImage(uri: pin.coverURI, size: 300, corner: pin.type == "artist" ? 60 : 3)
+            CoverImage(uri: pin.coverURI, size: 300, corner: pin.kind == "artist" ? 60 : 3)
                 .frame(width: 104, height: 104)
                 .overlay(alignment: .topTrailing) {
                     Image(systemName: "pin.fill")

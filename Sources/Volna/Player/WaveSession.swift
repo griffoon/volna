@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 final class WaveSession {
     let seeds: [String]
-    /// Receives lines like `skip 18.4s · ok` or `trackStarted · http 400`.
+    /// Receives lines like `skip 18.4s | ok` or `trackStarted | http 400`.
     var onLog: ((String) -> Void)?
 
     private let client: YMClient
@@ -20,7 +20,7 @@ final class WaveSession {
     var tag: String? {
         guard let sessionID else { return nil }
         let short = sessionID.filter(\.isHexDigit).prefix(4).lowercased()
-        return "sess#\(short.isEmpty ? "0000" : short) · batch \(String(format: "%02d", batches))"
+        return "sess#\(short.isEmpty ? "0000" : short) | batch \(String(format: "%02d", batches))"
     }
 
     init(client: YMClient, seeds: [String]) {
@@ -42,7 +42,7 @@ final class WaveSession {
         let next = try await client.waveSessionTracks(sessionID: sessionID, queue: Array(played.suffix(Self.queueMemory)))
         if let batch = next.batchId { batchID = batch }
         batches += 1
-        log("batch \(String(format: "%02d", batches)) · \(next.sequence?.count ?? 0) trk")
+        log("batch \(String(format: "%02d", batches)) | \(next.sequence?.count ?? 0) trk")
         return next.sequence?.map(\.track) ?? []
     }
 
@@ -83,9 +83,9 @@ final class WaveSession {
         Task {
             do {
                 try await client.sendWaveFeedback(sessionID: sessionID, batchID: batchID, event: event)
-                log("\(label) · ok")
+                log("\(label) | ok")
             } catch {
-                log("\(label) · \(Self.describe(error))")
+                log("\(label) | \(Self.describe(error))")
             }
         }
     }

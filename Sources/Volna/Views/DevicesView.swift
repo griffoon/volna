@@ -21,7 +21,7 @@ struct DevicesView: View {
                 }
             }
 
-            Section(header: TerminalLabel(text: "в сети · \(ynison.snapshot.devices.count)")) {
+            Section(header: TerminalLabel(text: "в сети | \(ynison.snapshot.devices.count)")) {
                 if ynison.snapshot.devices.isEmpty {
                     Text("> других устройств нет. Открой Яндекс Музыку на ПК или Станции.")
                         .font(Brand.mono(12))
