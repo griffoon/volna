@@ -7,115 +7,47 @@ struct LibraryView: View {
     @State private var error: String?
     @State private var creating = false
     @State private var newPlaylistTitle = ""
+    /// A few liked tracks for the moving cover wall.
+    @State private var wall: [Track] = []
+    @State private var startingLiked = false
 
     var body: some View {
         NavigationStack {
-            List {
-                TerminalHeader(title: "Коллекция", caption: session.displayName.map { "user: \($0.lowercased())" })
-                    .terminalRow()
-                    .listRowSeparator(.hidden)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 30) {
+                    header
+                    NavigationLink { LikedTracksView() } label: {
+                        LikedWall(count: session.likedRefs.count, tracks: wall,
+                                  isStarting: startingLiked,
+                                  play: { Task { await playLiked(shuffled: false) } },
+                                  shuffle: { Task { await playLiked(shuffled: true) } })
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
 
-                NavigationLink {
-                    LikedTracksView()
-                } label: {
-                    LikedHero(count: session.likedRefs.count)
-                }
-                .terminalRow()
-                .listRowSeparator(.hidden)
+                    if !session.pins.isEmpty || !session.presaves.isEmpty { tokens }
 
-                if !session.presaves.isEmpty {
-                    Section {
-                        ScrollView(.horizontal) {
-                            LazyHStack(alignment: .top, spacing: 14) {
-                                ForEach(session.presaves) { album in
-                                    NavigationLink { AlbumView(album: album) } label: {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            AlbumCard(album: album)
-                                            if let day = album.releaseDay {
-                                                Text("> \(day.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "ru_RU"))))")
-                                                    .font(Brand.mono(11, weight: .bold))
-                                                    .foregroundStyle(Brand.acid)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    crate
+
+                    NavigationLink { HistoryView() } label: {
+                        HStack(spacing: 10) {
+                            Text("$").foregroundStyle(Brand.acid)
+                            Text("history --recent").foregroundStyle(.white)
+                            Spacer()
+                            Text("история ›").foregroundStyle(.white.opacity(0.5))
                         }
-                        .scrollIndicators(.hidden)
-                        .buttonStyle(.plain)
-                        .terminalRow()
-                    } header: {
-                        TerminalLabel(text: "скоро выйдет")
+                        .font(Brand.mono(14, weight: .bold))
+                        .padding(.horizontal, 16)
+                        .frame(height: 52)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
+                        .padding(.horizontal, 20)
                     }
+                    .buttonStyle(.plain)
                 }
-
-                if !session.pins.isEmpty {
-                    Section {
-                        ScrollView(.horizontal) {
-                            LazyHStack(alignment: .top, spacing: 14) {
-                                ForEach(session.pins) { PinnedLink(pin: $0) }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        .buttonStyle(.plain)
-                        .terminalRow()
-                    } header: {
-                        TerminalLabel(text: "закреплённое")
-                    }
-                }
-
-                NavigationLink {
-                    HistoryView()
-                } label: {
-                    Label {
-                        Text("История").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                    } icon: {
-                        Image(systemName: "clock.arrow.circlepath").foregroundStyle(Brand.acid)
-                    }
-                }
-                .terminalRow()
-
-                Section {
-                    ForEach(playlists) { playlist in
-                        NavigationLink {
-                            PlaylistView(playlist: playlist)
-                        } label: {
-                            HStack(spacing: 14) {
-                                CoverImage(uri: playlist.coverURI, size: 120)
-                                    .frame(width: 52, height: 52)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(playlist.title)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(2)
-                                    if let count = playlist.trackCount {
-                                        Text("[\(count) трк]")
-                                            .font(Brand.mono(11))
-                                            .foregroundStyle(.white.opacity(0.45))
-                                    }
-                                }
-                            }
-                        }
-                        .terminalRow()
-                    }
-                } header: {
-                    HStack {
-                        TerminalLabel(text: "плейлисты · \(playlists.count)")
-                        Spacer()
-                        Button {
-                            Haptics.tap()
-                            newPlaylistTitle = ""
-                            creating = true
-                        } label: {
-                            Label("новый", systemImage: "plus")
-                                .font(Brand.mono(12, weight: .bold))
-                                .foregroundStyle(Brand.acid)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                .padding(.bottom, 140)
             }
-            .terminalPage()
+            .scrollIndicators(.hidden)
+            .background(Brand.ink)
             .overlay {
                 if let error { ErrorBanner(message: error) { Task { await load() } } }
             }
@@ -128,6 +60,113 @@ struct LibraryView: View {
                 Button("Создать") { Task { await createPlaylist() } }
             }
         }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("> ~/коллекция" + (session.displayName.map { " · \($0.lowercased())" } ?? ""))
+                .font(Brand.mono(11, weight: .medium))
+                .foregroundStyle(Brand.acid)
+            Text("КОЛЛЕКЦИЯ")
+                .font(Brand.display(46))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(stats)
+                .font(Brand.mono(12))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+    }
+
+    private var stats: String {
+        var parts = ["\(session.likedRefs.count) трк"]
+        if !playlists.isEmpty { parts.append("\(playlists.count) плейл.") }
+        if !session.pins.isEmpty { parts.append("\(session.pins.count) закрепл.") }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: Pins and presaves as round tokens
+
+    private var tokens: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TerminalLabel(text: "под рукой").padding(.horizontal, 20)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(session.presaves) { album in
+                        NavigationLink { AlbumView(album: album) } label: {
+                            Token(cover: album.coverUri, title: album.title,
+                                  badge: album.releaseDay.map { $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "ru_RU"))) },
+                                  round: false)
+                        }
+                    }
+                    ForEach(session.pins) { PinnedLink(pin: $0) }
+                }
+                .padding(.horizontal, 20)
+            }
+            .scrollIndicators(.hidden)
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: Playlists as a crate you flip through
+
+    private var crate: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                TerminalLabel(text: "плейлисты · \(playlists.count)")
+                Spacer()
+                Text("листай →")
+                    .font(Brand.mono(11))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .padding(.horizontal, 20)
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    ForEach(playlists) { playlist in
+                        NavigationLink { PlaylistView(playlist: playlist) } label: {
+                            CrateCard(cover: playlist.coverURI, title: playlist.title,
+                                      caption: playlist.trackCount.map { "[\($0) трк]" })
+                        }
+                        .buttonStyle(.plain)
+                        .crateFlip()
+                    }
+                    Button {
+                        Haptics.tap()
+                        newPlaylistTitle = ""
+                        creating = true
+                    } label: {
+                        CrateCard(cover: nil, title: "новый плейлист", caption: "+ создать", isNew: true)
+                    }
+                    .buttonStyle(.plain)
+                    .crateFlip()
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .contentMargins(.horizontal, 60, for: .scrollContent)
+            .scrollIndicators(.hidden)
+            .frame(height: 270)
+            .onScrollTargetVisibilityChange(idType: Playlist.ID.self, threshold: 0.9) { _ in Haptics.tick() }
+        }
+    }
+
+    // MARK: Actions
+
+    private func playLiked(shuffled: Bool) async {
+        guard !startingLiked else { return }
+        startingLiked = true
+        defer { startingLiked = false }
+        var tracks = session.likedTrackCache
+        if tracks.isEmpty, let client = session.client {
+            tracks = (try? await client.tracks(refs: Array(session.likedRefs.prefix(300)))) ?? []
+        }
+        guard !tracks.isEmpty else { return }
+        Haptics.thump()
+        player.play(shuffled ? tracks.shuffled() : tracks)
     }
 
     private func createPlaylist() async {
@@ -154,35 +193,185 @@ struct LibraryView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        if wall.isEmpty {
+            let cached = Array(session.likedTrackCache.prefix(24))
+            wall = cached.isEmpty ? ((try? await client.tracks(refs: Array(session.likedRefs.prefix(24)))) ?? []) : cached
+        }
     }
 }
 
-/// "Мне нравится" as a big terminal block: count in display type, acid accent.
-private struct LikedHero: View {
+/// "Мне нравится": two rows of liked covers drifting past each other in grey, a huge count on
+/// top, play and shuffle at hand. Tapping the block opens the full list.
+private struct LikedWall: View {
     let count: Int
+    let tracks: [Track]
+    let isStarting: Bool
+    let play: () -> Void
+    let shuffle: () -> Void
+
+    private static let tile: CGFloat = 66
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("// мне нравится")
-                    .font(Brand.mono(12, weight: .bold))
-                    .foregroundStyle(Brand.acid)
-                Spacer()
-                Image(systemName: "heart.fill").foregroundStyle(Brand.acid)
+        ZStack(alignment: .bottomLeading) {
+            VStack(spacing: 6) {
+                drifting(Array(tracks.prefix(12)), speed: 14)
+                drifting(Array(tracks.dropFirst(12).prefix(12)), speed: -10)
+                drifting(Array(tracks.prefix(12).reversed()), speed: 8)
             }
-            Text(count > 0 ? count.formatted(.number.grouping(.never)) : "····")
-                .font(Brand.display(64))
-                .foregroundStyle(.white)
-                .contentTransition(.numericText())
-            Text("треков в коллекции")
-                .font(Brand.mono(12))
-                .foregroundStyle(.white.opacity(0.55))
+            .grayscale(1)
+            .opacity(0.55)
+            .frame(height: Self.tile * 3 + 12)
+            .clipped()
+            .overlay(LinearGradient(colors: [Brand.ink.opacity(0.1), Brand.ink.opacity(0.95)],
+                                    startPoint: .top, endPoint: .bottom))
+
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("// мне нравится")
+                        .font(Brand.mono(12, weight: .bold))
+                        .foregroundStyle(Brand.acid)
+                    Text(count > 0 ? count.formatted(.number.grouping(.never)) : "····")
+                        .font(Brand.display(60))
+                        .foregroundStyle(.white)
+                        .contentTransition(.numericText())
+                    Text("треков")
+                        .font(Brand.mono(12))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                Spacer()
+                HStack(spacing: 10) {
+                    Button(action: shuffle) {
+                        Image(systemName: "shuffle")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 50, height: 50)
+                            .background(.black.opacity(0.5), in: .circle)
+                            .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
+                    }
+                    .accessibilityLabel("Перемешать «Мне нравится»")
+                    Button(action: play) {
+                        Group {
+                            if isStarting {
+                                ProgressView().tint(Brand.ink)
+                            } else {
+                                Image(systemName: "play.fill").font(.system(size: 22, weight: .heavy))
+                            }
+                        }
+                        .foregroundStyle(Brand.ink)
+                        .frame(width: 60, height: 60)
+                        .background(Brand.acid, in: .circle)
+                        .shadow(color: Brand.acid.opacity(0.5), radius: 14)
+                    }
+                    .accessibilityLabel("Играть «Мне нравится»")
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(18)
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.04), in: .rect(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Brand.acid.opacity(0.5), lineWidth: 1))
-        .padding(.vertical, 6)
+        .clipShape(.rect(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Brand.acid.opacity(0.45), lineWidth: 1))
+        .padding(.horizontal, 20)
+    }
+
+    /// One endless row of covers sliding sideways at `speed` points per second.
+    private func drifting(_ row: [Track], speed: Double) -> some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let width = CGFloat(max(row.count, 1)) * (Self.tile + 6)
+            let shift = CGFloat((context.date.timeIntervalSinceReferenceDate * speed).truncatingRemainder(dividingBy: Double(width)))
+            HStack(spacing: 6) {
+                ForEach(0..<2, id: \.self) { _ in
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, track in
+                        CoverImage(uri: track.cover, size: 150, corner: 2)
+                            .frame(width: Self.tile, height: Self.tile)
+                    }
+                }
+            }
+            .offset(x: speed > 0 ? -shift : shift - width)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: Self.tile)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A playlist as a record in a crate: a big cover with its title under it.
+private struct CrateCard: View {
+    let cover: String?
+    let title: String
+    let caption: String?
+    var isNew = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Group {
+                if isNew {
+                    ZStack {
+                        Rectangle().fill(.white.opacity(0.03))
+                        Image(systemName: "plus").font(.system(size: 40, weight: .light)).foregroundStyle(Brand.acid)
+                    }
+                    .overlay(Rectangle().stroke(Brand.acid.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+                } else {
+                    CoverImage(uri: cover, size: 600, corner: 3)
+                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white.opacity(0.12), lineWidth: 1))
+                }
+            }
+            .frame(width: 200, height: 200)
+            .shadow(color: .black.opacity(0.7), radius: 18, y: 10)
+            Text(title)
+                .font(Brand.display(16))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            if let caption {
+                Text(caption)
+                    .font(Brand.mono(11, weight: .bold))
+                    .foregroundStyle(isNew ? Brand.acid : .white.opacity(0.45))
+            }
+        }
+        .frame(width: 200, alignment: .leading)
+        .padding(.horizontal, 8)
+    }
+}
+
+/// Small round (artist) or square (release) token with a caption, for pins and presaves.
+private struct Token: View {
+    let cover: String?
+    let title: String
+    let badge: String?
+    let round: Bool
+
+    var body: some View {
+        VStack(spacing: 6) {
+            CoverImage(uri: cover, size: 200, corner: round ? 40 : 3)
+                .frame(width: 80, height: 80)
+                .overlay(alignment: .bottom) {
+                    if let badge {
+                        Text(badge)
+                            .font(Brand.mono(10, weight: .heavy))
+                            .foregroundStyle(Brand.ink)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Brand.acid, in: .capsule)
+                            .offset(y: 8)
+                    }
+                }
+            Text(title)
+                .font(Brand.mono(11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(1)
+                .frame(width: 88)
+                .padding(.top, badge == nil ? 0 : 6)
+        }
+    }
+}
+
+private extension View {
+    /// Records leaning back as they move away from the middle of the crate.
+    func crateFlip() -> some View {
+        scrollTransition(.interactive, axis: .horizontal) { content, phase in
+            content
+                .rotation3DEffect(.degrees(phase.value * -38), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+                .scaleEffect(1 - abs(phase.value) * 0.14)
+                .opacity(1 - abs(phase.value) * 0.45)
+        }
     }
 }
 
