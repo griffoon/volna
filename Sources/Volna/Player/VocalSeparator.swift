@@ -223,50 +223,47 @@ private enum SeparationJob {
                              channels: channels, capacity: capacity)
         VocalStems.set(stem)
 
+        // Decode the whole track first (a couple of seconds): the tap can then play our decode
+        // from start to end without ever switching sources while the model catches up.
+        var total = 0
+        var buffers = 0
+        while let buffer = output.copyNextSampleBuffer() {
+            total = append(buffer, channels: Int(asbd.mChannelsPerFrame), stem: stem, at: total)
+            buffers += 1
+            if buffers % 64 == 0 {
+                try Task.checkCancellation()
+                align(stem)
+            }
+        }
+        if reader.status == .failed { throw reader.error ?? SeparationError.unreadable }
+        guard total > 0 else { throw SeparationError.noAudio }
+        align(stem)
+
         let engine = try ChunkEngine(model: model, stem: stem)
-        var pending = [[Float]](repeating: [], count: channels)
-        var pendingStart = 0
-        var chunkStart = 0
-        var finished = false
+        // Enough frames that the last one covers the end; past `total` the buffers are silence.
+        let totalFrames = min((total + fftSize) / hop, (capacity - fftSize) / hop + 1)
         let chunkSamples = (frames - 1) * hop + fftSize
+        var chunkStart = 0
 
         while true {
             try Task.checkCancellation()
-            // Decode until a whole chunk is available (or the file ends).
-            while !finished, pendingStart + pending[0].count < chunkStart * hop + chunkSamples {
-                guard let buffer = output.copyNextSampleBuffer() else {
-                    finished = true
-                    // Silence after the end so the last frames are complete.
-                    for c in 0..<channels { pending[c].append(contentsOf: repeatElement(0, count: fftSize)) }
-                    break
-                }
-                append(buffer, channels: Int(asbd.mChannelsPerFrame), to: &pending,
-                       stem: stem, at: pendingStart + pending[0].count)
-            }
-            if reader.status == .failed { throw reader.error ?? SeparationError.unreadable }
-            align(stem)
-
-            let available = (pendingStart + pending[0].count - chunkStart * hop - fftSize) / hop + 1
-            let count = min(frames, available)
+            let count = min(frames, totalFrames - chunkStart)
             guard count > 0 else { break }
-            let isLast = finished && available <= frames
-            let offset = chunkStart * hop - pendingStart
-            let input = pending.map { Array($0[offset..<min($0.count, offset + (count - 1) * hop + fftSize)]) }
+            let isLast = chunkStart + frames >= totalFrames
+            let origin = chunkStart * hop
+            let input = stem.mix.map { channel in
+                (0..<chunkSamples).map { origin + $0 < capacity ? Float(channel[origin + $0]) : 0 }
+            }
 
             let lo = chunkStart == 0 ? 0 : edge
             let hi = isLast ? count : frames - edge
             try engine.process(input: input, count: count, startFrame: chunkStart, keep: lo..<hi)
             stem.markProcessed(isLast ? capacity : (chunkStart + hi) * hop)
-            progress(isLast ? 1 : min(0.99, Double((chunkStart + hi) * hop) / Double(capacity)))
+            progress(isLast ? 1 : min(0.99, Double((chunkStart + hi) * hop) / Double(total)))
+            align(stem)
             if isLast { break }
-
             // Next chunk starts `edge` frames before the first frame it will keep.
             chunkStart += hi - edge
-            let drop = chunkStart * hop - pendingStart
-            if drop > 0 {
-                for c in 0..<channels { pending[c].removeFirst(min(drop, pending[c].count)) }
-                pendingStart += drop
-            }
         }
 
         // Playback may start (or the probe may be unclear) after separation is done.
@@ -276,28 +273,24 @@ private enum SeparationJob {
         }
     }
 
-    /// Appends an interleaved float sample buffer to the per-channel arrays and to the stem's mix.
-    private static func append(_ buffer: CMSampleBuffer, channels sourceChannels: Int, to pending: inout [[Float]],
-                               stem: VocalStem, at position: Int) {
-        guard let block = CMSampleBufferGetDataBuffer(buffer) else { return }
+    /// Writes an interleaved float sample buffer into the stem's mix; returns the new length.
+    private static func append(_ buffer: CMSampleBuffer, channels sourceChannels: Int,
+                               stem: VocalStem, at position: Int) -> Int {
+        guard let block = CMSampleBufferGetDataBuffer(buffer) else { return position }
         let length = CMBlockBufferGetDataLength(block)
         var samples = [Float](repeating: 0, count: length / MemoryLayout<Float>.size)
         samples.withUnsafeMutableBytes { raw in
             _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: raw.baseAddress!)
         }
         let stride = max(1, sourceChannels)
-        let frameCount = samples.count / stride
-        for c in 0..<pending.count {
+        let frameCount = min(samples.count / stride, max(0, stem.capacity - position))
+        for c in 0..<stem.channels {
             let source = min(c, stride - 1)
-            let mix = stem.mix[c]
-            pending[c].reserveCapacity(pending[c].count + frameCount)
-            for i in 0..<frameCount {
-                let value = samples[i * stride + source]
-                pending[c].append(value)
-                if position + i < stem.capacity { mix[position + i] = Float16(value) }
-            }
+            let mix = stem.mix[c] + position
+            for i in 0..<frameCount { mix[i] = Float16(samples[i * stride + source]) }
         }
         stem.markDecoded(position + frameCount)
+        return position + frameCount
     }
 
     /// Largest decoder disagreement looked for (~190 ms at 44.1 kHz).
@@ -487,7 +480,9 @@ private enum SeparationJob {
                         if b < bins {
                             let vRe = vocal(2 * c, b, f) * vocalScale
                             let vIm = vocal(2 * c + 1, b, f) * vocalScale
-                            let estimate = min(1, (vRe * vRe + vIm * vIm).squareRoot() / (level + 1e-9))
+                            let ratio = (vRe * vRe + vIm * vIm).squareRoot() / (level + 1e-9)
+                            // A non-finite model value means "don't know": leave the bin alone.
+                            let estimate = ratio.isFinite ? min(1, ratio) : 0
                             mask = shape(estimate, level: level, channel: c, bin: b)
                         }
                         outRe[b] = mixRe * mask

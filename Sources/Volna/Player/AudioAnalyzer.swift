@@ -377,19 +377,23 @@ private final class TapContext {
             return
         }
 
+        // Our decode covers the whole track, so once engaged the tap stays on it: no switching
+        // between sources while the model works. Where the vocal isn't separated yet, the vocal
+        // simply stays in (gain glides to 0 before that point and back up after it).
         let source = first + offset
-        let ready = source >= 0 && source + frames <= stem.processed
-        let targetGain = found.gain
-        let targetMix: Float = ready && (targetGain > 0.001 || vocalGain > 0.001) ? 1 : 0
-        defer {
-            vocalGain = targetGain
-            vocalMix = targetMix
-        }
-        guard targetMix > 0 || vocalMix > 0 else { return }
-        guard ready else {
+        let decoded = source >= 0 && source + frames <= stem.decoded
+        guard decoded else {
             resetVocalRemoval()
             return
         }
+        let processed = stem.processed
+        let lookahead = max(frames, Self.vocalLookahead)
+        let vocalReady = source + frames + lookahead <= processed
+        let targetGain = vocalReady ? found.gain : 0
+        let targetMix: Float = found.gain > 0.001 || vocalGain > 0.001 ? 1 : 0
+        guard targetMix > 0 || vocalMix > 0 else { return }
+        // Only reachable after a seek into the unseparated part: drop the vocal at once.
+        if source + frames > processed { vocalGain = 0 }
 
         let gainStep = (targetGain - vocalGain) / Float(frames)
         let mixStep = (targetMix - vocalMix) / Float(frames)
@@ -401,13 +405,20 @@ private final class TapContext {
             var gain = vocalGain
             var weight = vocalMix
             for i in 0..<frames {
-                let separated = Float(mix[i]) - gain * Float(vocal[i])
-                data[i] += (separated - data[i]) * weight
+                let voice = gain > 0 ? gain * Float(vocal[i]) : 0
+                let separated = min(max(Float(mix[i]) - voice, -1), 1)
+                if separated.isFinite { data[i] += (separated - data[i]) * weight }
                 gain += gainStep
                 weight += mixStep
             }
         }
+        vocalGain = targetGain
+        vocalMix = targetMix
     }
+
+    /// The vocal is only removed this far (samples) ahead of the separated edge, so the removal
+    /// fades out before reaching it instead of stopping mid-buffer.
+    private static let vocalLookahead = 8192
 
     /// Hands straight back to AVPlayer's audio: without stem data there is nothing to blend with.
     private func resetVocalRemoval() {
